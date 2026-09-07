@@ -5,7 +5,7 @@ import Simulador from './Simulador';
 function MapaView({ alVolver }) {
   const contenedorMapa = useRef(null);
   const referenciaMapa = useRef(null);
-  const vehiculosRef = useRef({}); // Diccionario de { id: { marker, coords, sourceId, color, ... } }
+  const vehiculosRef = useRef({}); // Diccionario de { id: { marker, coords, features, sourceId, color, ... } }
   const [vehiculosUI, setVehiculosUI] = useState({}); // Para renderizar el dashboard
 
   // Colores para asignar dinámicamente a nuevos camiones
@@ -39,10 +39,20 @@ function MapaView({ alVolver }) {
       const datos = JSON.parse(evento.data);
       console.log('Datos recibidos del servidor:', datos);
       
-      const { dispositivo_id, lo, la, temperatura, vibracion, voltaje } = datos;
+      const { dispositivo_id, lo, la, temperatura, vibracion, voltaje, timestamp } = datos;
 
       if (dispositivo_id && lo && la) {
         const nuevaCoordenada = [lo, la];
+        const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+        
+        // Propiedades del punto histórico
+        const puntoPropiedades = {
+          dispositivo_id,
+          hora: horaLegible,
+          temperatura: temperatura?.toFixed(1) || 'N/A',
+          vibracion: vibracion?.toFixed(2) || 'N/A'
+        };
+
         let vehiculo = vehiculosRef.current[dispositivo_id];
         let esNuevo = false;
 
@@ -51,23 +61,37 @@ function MapaView({ alVolver }) {
           // Asignar un color según cuántos vehículos haya
           const color = colores[Object.keys(vehiculosRef.current).length % colores.length];
 
-          // 1. Crear el Source y Layer para la ruta
           const sourceId = `ruta-${dispositivo_id}`;
+          
+          // El Feature 0 será la Línea, los siguientes serán los Puntos
+          const featuresIniciales = [
+            {
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: [nuevaCoordenada] },
+              properties: {}
+            },
+            {
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: nuevaCoordenada },
+              properties: puntoPropiedades
+            }
+          ];
+
+          // 1. Crear el Source 
           referenciaMapa.current.addSource(sourceId, {
             type: 'geojson',
             data: {
-              type: 'Feature',
-              geometry: {
-                type: 'LineString',
-                coordinates: [nuevaCoordenada]
-              }
+              type: 'FeatureCollection',
+              features: featuresIniciales
             }
           });
 
+          // 2. Crear Capa de Línea
           referenciaMapa.current.addLayer({
-            id: `capa-${dispositivo_id}`,
+            id: `capa-linea-${dispositivo_id}`,
             type: 'line',
             source: sourceId,
+            filter: ['==', '$type', 'LineString'],
             layout: {
               'line-join': 'round',
               'line-cap': 'round'
@@ -79,14 +103,59 @@ function MapaView({ alVolver }) {
             }
           });
 
-          // 2. Crear el Marcador
+          // 3. Crear Capa de Puntos (Invisibles o pequeños para cliquear)
+          const capaPuntosId = `capa-puntos-${dispositivo_id}`;
+          referenciaMapa.current.addLayer({
+            id: capaPuntosId,
+            type: 'circle',
+            source: sourceId,
+            filter: ['==', '$type', 'Point'],
+            paint: {
+              'circle-radius': 8,
+              'circle-color': color,
+              'circle-opacity': 0.5,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#ffffff'
+            }
+          });
+
+          // 4. Configurar Eventos Click para los Puntos
+          referenciaMapa.current.on('click', capaPuntosId, (e) => {
+            const props = e.features[0].properties;
+            const coord = e.features[0].geometry.coordinates.slice();
+            
+            const htmlInfo = `
+              <div class="text-zinc-900 p-1">
+                <strong class="text-red-600 block border-b pb-1 mb-1">${props.dispositivo_id}</strong>
+                <div class="text-xs">
+                  <p>🕒 Hora: <b>${props.hora}</b></p>
+                  <p>🔥 Temp: <b>${props.temperatura} °C</b></p>
+                  <p>〰️ Vibración: <b>${props.vibracion} G</b></p>
+                </div>
+              </div>
+            `;
+
+            new maplibregl.Popup()
+              .setLngLat(coord)
+              .setHTML(htmlInfo)
+              .addTo(referenciaMapa.current);
+          });
+
+          referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
+            referenciaMapa.current.getCanvas().style.cursor = 'pointer';
+          });
+          referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
+            referenciaMapa.current.getCanvas().style.cursor = '';
+          });
+
+          // 5. Crear el Marcador Principal (El vehículo actual)
           const elementoMarcador = document.createElement('div');
-          elementoMarcador.className = 'w-4 h-4 rounded-full border-2 border-white shadow-lg cursor-pointer transition-transform hover:scale-125';
+          elementoMarcador.className = 'w-5 h-5 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] cursor-pointer transition-transform hover:scale-125 z-50 relative';
           elementoMarcador.style.backgroundColor = color;
           
           const marker = new maplibregl.Marker({ element: elementoMarcador })
             .setLngLat(nuevaCoordenada)
-            .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id}</strong>`))
+            .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id}</strong> (Actual)`))
             .addTo(referenciaMapa.current);
 
           vehiculo = {
@@ -94,6 +163,7 @@ function MapaView({ alVolver }) {
             color,
             marker,
             coords: [nuevaCoordenada],
+            features: featuresIniciales,
             sourceId
           };
           vehiculosRef.current[dispositivo_id] = vehiculo;
@@ -102,20 +172,27 @@ function MapaView({ alVolver }) {
           vehiculo.marker.setLngLat(nuevaCoordenada);
           vehiculo.coords.push(nuevaCoordenada);
           
+          // Actualizar LineString (Feature 0)
+          vehiculo.features[0].geometry.coordinates = vehiculo.coords;
+          
+          // Añadir nuevo Point
+          vehiculo.features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: nuevaCoordenada },
+            properties: puntoPropiedades
+          });
+          
           const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
           if (fuenteDatos) {
             fuenteDatos.setData({
-              type: 'Feature',
-              geometry: {
-                type: 'LineString',
-                coordinates: vehiculo.coords
-              }
+              type: 'FeatureCollection',
+              features: vehiculo.features
             });
           }
         }
 
-        // Actualizar datos del sensor para el UI
-        vehiculo.ultimaAct = new Date().toLocaleTimeString();
+        // Actualizar datos del sensor para el UI del Dashboard
+        vehiculo.ultimaAct = horaLegible;
         if (temperatura !== undefined) vehiculo.temperatura = temperatura;
         if (vibracion !== undefined) vehiculo.vibracion = vibracion;
         if (voltaje !== undefined) vehiculo.voltaje = voltaje;
@@ -176,7 +253,7 @@ function MapaView({ alVolver }) {
                 onClick={() => centrarEnVehiculo(vehiculo.id)}
               >
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: vehiculo.color }}></div>
+                  <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
                   <div className="font-bold text-white">{vehiculo.id}</div>
                   <div className="text-xs text-zinc-500 ml-auto">{vehiculo.ultimaAct}</div>
                 </div>

@@ -45,7 +45,8 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         dispositivo_id,
         temperatura,
         vibracion,
-        voltaje 
+        voltaje,
+        timestamp
       });
       for (const client of fastify.websocketServer.clients) {
         if (client.readyState === 1) { // OPEN
