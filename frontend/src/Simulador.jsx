@@ -1,0 +1,113 @@
+import { useState, useEffect, useRef } from 'react';
+
+export default function Simulador() {
+  const [conectado, setConectado] = useState(false);
+  const [ubicacion, setUbicacion] = useState(null);
+  const [error, setError] = useState(null);
+  const [estado, setEstado] = useState('Inactivo');
+  const ws = useRef(null);
+  const watchId = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+    };
+  }, []);
+
+  const iniciarTransmision = () => {
+    if (!navigator.geolocation) {
+      setError('Geolocalización no soportada en este navegador.');
+      return;
+    }
+
+    setEstado('Conectado. Obteniendo GPS...');
+    setConectado(true);
+    
+    // Iniciar GPS
+    watchId.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const latitud = pos.coords.latitude;
+        const longitud = pos.coords.longitude;
+        setUbicacion({ latitud, longitud });
+        setEstado('Transmitiendo datos...');
+
+        // Enviar al servidor mediante POST HTTP (esto evita el bug de WebSocket en móviles)
+        const datos = {
+          timestamp: new Date().toISOString(),
+          dispositivo_id: 'movil-simulador-01',
+          latitud: latitud,
+          longitud: longitud,
+          temperatura: 25.0,
+          vibracion: 0.5,
+          voltaje: 3.7
+        };
+        
+        fetch('/api/telemetria', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(datos)
+        }).catch(err => {
+          console.error('Error al enviar:', err);
+        });
+      },
+      (err) => {
+        setError(`Error de GPS: ${err.message}`);
+        setEstado('Error de GPS');
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  };
+
+  const detenerTransmision = () => {
+    if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+    setConectado(false);
+    setEstado('Inactivo');
+    setUbicacion(null);
+  };
+
+  return (
+    <div className="w-full h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-4">
+      <div className="bg-zinc-900 p-8 rounded-xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
+        <h1 className="text-3xl font-bold text-red-500 mb-2">Simulador ESP32</h1>
+        <p className="text-zinc-400 mb-8">Envía tu ubicación actual al servidor</p>
+
+        <div className="mb-8">
+          <div className="text-sm text-zinc-500 mb-1">Estado</div>
+          <div className={`text-lg font-mono ${conectado ? 'text-green-400' : 'text-zinc-300'}`}>
+            {estado}
+          </div>
+        </div>
+
+        {ubicacion && (
+          <div className="mb-8 p-4 bg-zinc-950 rounded-lg font-mono text-sm border border-zinc-800">
+            <div className="text-zinc-400 mb-2">Última coordenada enviada:</div>
+            <div className="text-blue-400">Lat: {ubicacion.latitud.toFixed(6)}</div>
+            <div className="text-green-400">Lon: {ubicacion.longitud.toFixed(6)}</div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-8 p-3 bg-red-900 bg-opacity-30 border border-red-800 text-red-300 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {!conectado ? (
+          <button 
+            onClick={iniciarTransmision}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-colors shadow-lg"
+          >
+            Iniciar Transmisión
+          </button>
+        ) : (
+          <button 
+            onClick={detenerTransmision}
+            className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-bold py-4 px-4 rounded-xl transition-colors shadow-lg"
+          >
+            Detener Transmisión
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
