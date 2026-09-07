@@ -5,6 +5,7 @@ export default function Simulador() {
   const [ubicacion, setUbicacion] = useState(null);
   const [error, setError] = useState(null);
   const [estado, setEstado] = useState('Inactivo');
+  const [dispositivoId, setDispositivoId] = useState(`camion-${Math.floor(Math.random() * 1000)}`);
   const ws = useRef(null);
   const watchId = useRef(null);
 
@@ -20,6 +21,12 @@ export default function Simulador() {
       return;
     }
 
+    if (!dispositivoId.trim()) {
+      setError('Debes ingresar un ID de dispositivo.');
+      return;
+    }
+    
+    setError(null);
     setEstado('Conectado. Obteniendo GPS...');
     setConectado(true);
     
@@ -34,11 +41,11 @@ export default function Simulador() {
         // Enviar al servidor mediante POST HTTP (esto evita el bug de WebSocket en móviles)
         const datos = {
           timestamp: new Date().toISOString(),
-          dispositivo_id: 'movil-simulador-01',
+          dispositivo_id: dispositivoId.trim(),
           latitud: latitud,
           longitud: longitud,
-          temperatura: 25.0,
-          vibracion: 0.5,
+          temperatura: 25.0 + Math.random() * 10,
+          vibracion: 0.5 + Math.random(),
           voltaje: 3.7
         };
         
@@ -70,6 +77,20 @@ export default function Simulador() {
       <div className="bg-zinc-900 p-8 rounded-xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
         <h1 className="text-3xl font-bold text-red-500 mb-2">Simulador ESP32</h1>
         <p className="text-zinc-400 mb-8">Envía tu ubicación actual al servidor</p>
+
+        <div className="mb-6 text-left">
+          <label className="block text-sm font-medium text-zinc-400 mb-2">
+            ID del Vehículo (Placa / Nombre)
+          </label>
+          <input 
+            type="text" 
+            value={dispositivoId}
+            onChange={(e) => setDispositivoId(e.target.value)}
+            disabled={conectado}
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors disabled:opacity-50"
+            placeholder="Ej. PLACA-123"
+          />
+        </div>
 
         <div className="mb-8">
           <div className="text-sm text-zinc-500 mb-1">Estado</div>

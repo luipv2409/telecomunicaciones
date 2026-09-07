@@ -39,7 +39,14 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
       ]);
 
       // Retransmitir a los clientes de websocket
-      const broadcastData = JSON.stringify({ lo: longitud, la: latitud, dispositivo_id });
+      const broadcastData = JSON.stringify({ 
+        lo: longitud, 
+        la: latitud, 
+        dispositivo_id,
+        temperatura,
+        vibracion,
+        voltaje 
+      });
       for (const client of fastify.websocketServer.clients) {
         if (client.readyState === 1) { // OPEN
           client.send(broadcastData);
