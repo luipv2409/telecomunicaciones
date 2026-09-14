@@ -132,7 +132,7 @@ function MapaView({ auth, alVolver }) {
 
     const intervaloChequeo = setInterval(() => {
       setVehiculosUI({ ...vehiculosRef.current });
-    }, 5000);
+    }, 4000);
 
     return () => {
       clearInterval(intervaloChequeo);
@@ -171,8 +171,28 @@ function MapaView({ auth, alVolver }) {
     setFiltrosVisibles(nuevosFiltros);
   };
 
+  const formatearNumero = (valor, decimales = 1, def = '0') => {
+    if (valor === undefined || valor === null || isNaN(Number(valor))) return def;
+    return Number(valor).toFixed(decimales);
+  };
+
   const registrarOActualizarVehiculo = (datos) => {
-    const { dispositivo_id, lo, la, temperatura, vibracion, voltaje, timestamp } = datos;
+    const { 
+      dispositivo_id, 
+      lo, 
+      la, 
+      temperatura, 
+      vibracion, 
+      voltaje, 
+      velocidad,
+      altitud,
+      rumbo,
+      bateria,
+      pitch,
+      roll,
+      timestamp 
+    } = datos;
+
     const numLon = parseFloat(lo);
     const numLat = parseFloat(la);
     if (isNaN(numLon) || isNaN(numLat)) return;
@@ -180,15 +200,19 @@ function MapaView({ auth, alVolver }) {
     const nuevaCoordenada = [numLon, numLat];
     const tiempoMs = timestamp ? new Date(timestamp).getTime() : Date.now();
     const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
-    
-    const tempNum = typeof temperatura === 'string' ? parseFloat(temperatura) : temperatura;
-    const vibNum = typeof vibracion === 'string' ? parseFloat(vibracion) : vibracion;
 
     const puntoPropiedades = {
       dispositivo_id,
       hora: horaLegible,
-      temperatura: tempNum !== undefined && tempNum !== null ? Number(tempNum).toFixed(1) : 'N/A',
-      vibracion: vibNum !== undefined && vibNum !== null ? Number(vibNum).toFixed(2) : 'N/A'
+      temperatura: formatearNumero(temperatura, 1, '25.0'),
+      vibracion: formatearNumero(vibracion, 2, '0.00'),
+      velocidad: formatearNumero(velocidad, 1, '0.0'),
+      altitud: formatearNumero(altitud, 1, '0.0'),
+      rumbo: formatearNumero(rumbo, 0, '0'),
+      bateria: formatearNumero(bateria, 0, '100'),
+      voltaje: formatearNumero(voltaje, 2, '3.70'),
+      pitch: formatearNumero(pitch, 1, '0.0'),
+      roll: formatearNumero(roll, 1, '0.0')
     };
 
     let vehiculo = vehiculosRef.current[dispositivo_id];
@@ -234,7 +258,7 @@ function MapaView({ auth, alVolver }) {
           paint: {
             'circle-radius': 6,
             'circle-color': color,
-            'circle-opacity': 0.8,
+            'circle-opacity': 0.85,
             'circle-stroke-width': 2,
             'circle-stroke-color': '#ffffff'
           }
@@ -247,12 +271,16 @@ function MapaView({ auth, alVolver }) {
           new maplibregl.Popup()
             .setLngLat(coord)
             .setHTML(`
-              <div style="color: #18181b; padding: 6px; font-family: sans-serif;">
-                <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 4px;">${props.dispositivo_id}</strong>
-                <div style="font-size: 12px; line-height: 1.5;">
+              <div style="color: #18181b; padding: 6px; font-family: sans-serif; min-width: 170px;">
+                <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 6px;">${props.dispositivo_id}</strong>
+                <div style="font-size: 11px; line-height: 1.6;">
                   <div>🕒 Hora: <b>${props.hora}</b></div>
+                  <div>🚀 Vel: <b>${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
+                  <div>⛰️ Alt: <b>${props.altitud} m</b></div>
                   <div>🔥 Temp: <b>${props.temperatura} °C</b></div>
                   <div>〰️ Vib: <b>${props.vibracion} G</b></div>
+                  <div>📐 Pitch/Roll: <b>${props.pitch}° / ${props.roll}°</b></div>
+                  <div>🔋 Bat: <b>${props.bateria}% (${props.voltaje}V)</b></div>
                 </div>
               </div>
             `)
@@ -288,7 +316,8 @@ function MapaView({ auth, alVolver }) {
         coords: [nuevaCoordenada],
         features: featuresIniciales,
         sourceId,
-        ultimoTimestamp: tiempoMs
+        ultimoTimestamp: tiempoMs,
+        ...puntoPropiedades
       };
       vehiculosRef.current[dispositivo_id] = vehiculo;
       
@@ -318,12 +347,10 @@ function MapaView({ auth, alVolver }) {
         }
       }
       vehiculo.ultimoTimestamp = tiempoMs;
+      Object.assign(vehiculo, puntoPropiedades);
     }
 
     vehiculo.ultimaAct = horaLegible;
-    if (tempNum !== undefined && tempNum !== null) vehiculo.temperatura = Number(tempNum).toFixed(1);
-    if (vibNum !== undefined && vibNum !== null) vehiculo.vibracion = Number(vibNum).toFixed(2);
-    if (voltaje !== undefined) vehiculo.voltaje = voltaje;
   };
 
   const cargarHistorialDeHoy = async () => {
@@ -372,7 +399,7 @@ function MapaView({ auth, alVolver }) {
   const ahora = Date.now();
 
   return (
-    <div className="w-full h-screen relative bg-zinc-950 overflow-hidden">
+    <div className="w-full h-screen relative bg-zinc-950 overflow-hidden font-sans">
       <div 
         ref={contenedorMapa} 
         className="absolute inset-0 w-full h-full" 
@@ -381,35 +408,35 @@ function MapaView({ auth, alVolver }) {
       
       <button 
         onClick={alVolver} 
-        className="absolute top-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold py-2 px-4 rounded-lg shadow-xl transition-colors z-20"
+        className="absolute top-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold py-2 px-4 rounded-lg shadow-xl transition-colors z-20 text-sm"
       >
         ← Volver al Menú
       </button>
 
-      <div className="absolute top-20 left-4 w-80 max-h-[80vh] flex flex-col bg-zinc-900 bg-opacity-95 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-20">
-        <div className="p-4 border-b border-zinc-800">
-          <div className="flex items-center justify-between mb-2">
-            <h1 className="text-xl font-bold text-red-500">Mi Flota</h1>
+      <div className="absolute top-16 left-4 w-88 max-w-[90vw] max-h-[85vh] flex flex-col bg-zinc-900 bg-opacity-95 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-20">
+        <div className="p-3.5 border-b border-zinc-800">
+          <div className="flex items-center justify-between mb-1">
+            <h1 className="text-lg font-bold text-red-500">Panel de Flota Activa</h1>
           </div>
           <div className="text-xs text-zinc-400 flex justify-between items-center">
-            <span>Usuario: <b className="text-white">{auth.username}</b> ({auth.rol})</span>
+            <span>Operador: <b className="text-white">{auth.username}</b> ({auth.rol})</span>
             <button onClick={mostrarTodos} className="text-blue-400 hover:text-blue-300 underline">Ver Todos</button>
           </div>
         </div>
 
-        <div className="p-4 overflow-y-auto flex-1">
+        <div className="p-3.5 overflow-y-auto flex-1">
           {Object.keys(vehiculosUI).length === 0 ? (
-            <div className="text-zinc-500 text-sm italic text-center py-4">Esperando datos de telemetría...</div>
+            <div className="text-zinc-500 text-xs italic text-center py-6">Esperando telemetría de sensores...</div>
           ) : (
             <div className="flex flex-col gap-3">
               {Object.values(vehiculosUI).map((vehiculo) => {
-                const activo = vehiculo.ultimoTimestamp && (ahora - vehiculo.ultimoTimestamp < 30000);
+                const activo = vehiculo.ultimoTimestamp && (ahora - vehiculo.ultimoTimestamp < 25000);
                 return (
                   <div 
                     key={vehiculo.id} 
-                    className={`bg-zinc-950 border rounded-lg p-3 transition-colors ${filtrosVisibles[vehiculo.id] ? 'border-zinc-700' : 'border-zinc-900 opacity-50'}`}
+                    className={`bg-zinc-950 border rounded-xl p-3 transition-colors ${filtrosVisibles[vehiculo.id] ? 'border-zinc-700' : 'border-zinc-900 opacity-50'}`}
                   >
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex items-center gap-2.5 mb-2">
                       <input 
                         type="checkbox" 
                         checked={!!filtrosVisibles[vehiculo.id]}
@@ -418,28 +445,48 @@ function MapaView({ auth, alVolver }) {
                       />
                       <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
                       <div 
-                        className="font-bold text-white cursor-pointer hover:underline flex-1"
+                        className="font-bold text-white text-sm cursor-pointer hover:underline flex-1 truncate"
                         onClick={() => centrarEnVehiculo(vehiculo.id)}
                       >
                         {vehiculo.id}
                       </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${activo ? 'bg-green-900 text-green-300 animate-pulse' : 'bg-zinc-800 text-zinc-400'}`}>
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${activo ? 'bg-green-950 text-green-400 border border-green-800 animate-pulse' : 'bg-zinc-800 text-zinc-400'}`}>
                         {activo ? 'EN LÍNEA' : 'OFFLINE'}
                       </span>
                     </div>
                     
                     {filtrosVisibles[vehiculo.id] && (
-                      <div className="grid grid-cols-2 gap-2 text-xs pl-7 mt-2">
-                        <div className="bg-zinc-900 p-1.5 rounded">
-                          <span className="text-zinc-500 block">Temp</span>
-                          <span className="font-mono text-orange-400">{vehiculo.temperatura ? vehiculo.temperatura : 'N/A'} °C</span>
+                      <div className="flex flex-col gap-2 mt-2">
+                        <div className="grid grid-cols-3 gap-1.5 text-center text-[11px]">
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Velocidad</span>
+                            <span className="font-mono text-cyan-400 font-bold">{vehiculo.velocidad || '0.0'} km/h</span>
+                          </div>
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Altitud</span>
+                            <span className="font-mono text-indigo-400 font-bold">{vehiculo.altitud || '0.0'} m</span>
+                          </div>
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Rumbo</span>
+                            <span className="font-mono text-blue-400 font-bold">{vehiculo.rumbo || '0'}°</span>
+                          </div>
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Temp</span>
+                            <span className="font-mono text-orange-400 font-bold">{vehiculo.temperatura || '25.0'} °C</span>
+                          </div>
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Vibración</span>
+                            <span className="font-mono text-yellow-400 font-bold">{vehiculo.vibracion || '0.00'} G</span>
+                          </div>
+                          <div className="bg-zinc-900 p-1.5 rounded border border-zinc-800/80">
+                            <span className="text-zinc-500 block text-[9px]">Batería</span>
+                            <span className="font-mono text-green-400 font-bold">{vehiculo.bateria || '100'}%</span>
+                          </div>
                         </div>
-                        <div className="bg-zinc-900 p-1.5 rounded">
-                          <span className="text-zinc-500 block">Vibración</span>
-                          <span className="font-mono text-yellow-400">{vehiculo.vibracion ? vehiculo.vibracion : 'N/A'} G</span>
-                        </div>
-                        <div className="col-span-2 text-[11px] text-zinc-500 text-right">
-                          Último: {vehiculo.ultimaAct}
+
+                        <div className="flex justify-between items-center text-[10px] text-zinc-500 px-1">
+                          <span>Pitch: <b className="text-zinc-300">{vehiculo.pitch || '0.0'}°</b> | Roll: <b className="text-zinc-300">{vehiculo.roll || '0.0'}°</b></span>
+                          <span>🕒 {vehiculo.ultimaAct}</span>
                         </div>
                       </div>
                     )}
@@ -470,7 +517,7 @@ export default function App() {
       <div className="relative">
         <button 
           onClick={() => setModo('menu')} 
-          className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg shadow-lg z-10 transition-colors border border-zinc-700"
+          className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg shadow-lg z-10 transition-colors border border-zinc-700 text-sm"
         >
           ← Volver
         </button>
@@ -483,7 +530,7 @@ export default function App() {
     <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 font-sans">
       <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
         <h1 className="text-4xl font-bold text-red-500 mb-2 tracking-tight">TRACE-MIN</h1>
-        <p className="text-zinc-400 mb-10 text-sm">Sistema de Telemetría Vehicular</p>
+        <p className="text-zinc-400 mb-10 text-sm">Sistema de Telemetría Vehicular & Sensor Hub</p>
 
         <div className="flex flex-col gap-4">
           <button 
@@ -499,7 +546,7 @@ export default function App() {
             className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-2xl">📱</span>
-            Simular Vehículo
+            Simular Sensores Móviles
           </button>
         </div>
       </div>

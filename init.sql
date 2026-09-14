@@ -7,7 +7,16 @@ CREATE TABLE IF NOT EXISTS telemetria (
     ubicacion GEOMETRY(Point, 4326) NOT NULL,
     temperatura NUMERIC,
     vibracion NUMERIC,
-    voltaje NUMERIC
+    voltaje NUMERIC,
+    velocidad NUMERIC,
+    altitud NUMERIC,
+    rumbo NUMERIC,
+    bateria NUMERIC,
+    pitch NUMERIC,
+    roll NUMERIC,
+    aceleracion_x NUMERIC,
+    aceleracion_y NUMERIC,
+    aceleracion_z NUMERIC
 );
 
 SELECT create_hypertable('telemetria', 'timestamp', if_not_exists => TRUE);

@@ -2,19 +2,57 @@ import { useState, useEffect, useRef } from 'react';
 
 export default function Simulador() {
   const [conectado, setConectado] = useState(false);
-  const [ubicacion, setUbicacion] = useState(null);
   const [error, setError] = useState(null);
   const [estado, setEstado] = useState('Inactivo');
   const [dispositivoId, setDispositivoId] = useState(`camion-${Math.floor(Math.random() * 1000)}`);
+  
+  const [sensores, setSensores] = useState({
+    latitud: null,
+    longitud: null,
+    velocidad: 0,
+    altitud: 0,
+    rumbo: 0,
+    precision: 0,
+    vibracion: 0,
+    acelX: 0,
+    acelY: 0,
+    acelZ: 0,
+    pitch: 0,
+    roll: 0,
+    bateria: 100,
+    voltaje: 3.7,
+    temperatura: 25.0
+  });
+
   const watchId = useRef(null);
+  const motionListenerRef = useRef(null);
+  const orientationListenerRef = useRef(null);
+  const sensoresRef = useRef(sensores);
+  const intervaloEnvioRef = useRef(null);
 
   useEffect(() => {
+    sensoresRef.current = sensores;
+  }, [sensores]);
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+      navigator.getBattery().then((battery) => {
+        const actualizarBateria = () => {
+          const nivel = Math.round(battery.level * 100);
+          const volt = parseFloat((3.5 + (battery.level * 0.7)).toFixed(2));
+          setSensores(prev => ({ ...prev, bateria: nivel, voltaje: volt }));
+        };
+        actualizarBateria();
+        battery.addEventListener('levelchange', actualizarBateria);
+      }).catch(() => {});
+    }
+
     return () => {
-      if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+      detenerTransmision();
     };
   }, []);
 
-  const iniciarTransmision = () => {
+  const iniciarTransmision = async () => {
     if (!navigator.geolocation) {
       setError('Geolocalización no soportada en este dispositivo.');
       return;
@@ -24,34 +62,81 @@ export default function Simulador() {
       setError('Debes ingresar un ID de dispositivo.');
       return;
     }
-    
+
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        await DeviceMotionEvent.requestPermission();
+      } catch (e) {}
+    }
+
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        await DeviceOrientationEvent.requestPermission();
+      } catch (e) {}
+    }
+
     setError(null);
-    setEstado('Conectado. Obteniendo GPS...');
+    setEstado('Conectado. Adquiriendo sensores...');
     setConectado(true);
-    
+
+    motionListenerRef.current = (e) => {
+      const acc = e.acceleration || e.accelerationIncludingGravity;
+      if (acc) {
+        const x = acc.x || 0;
+        const y = acc.y || 0;
+        const z = acc.z || 0;
+        const mag = Math.sqrt(x * x + y * y + z * z) / 9.81;
+        setSensores(prev => ({
+          ...prev,
+          acelX: parseFloat(x.toFixed(2)),
+          acelY: parseFloat(y.toFixed(2)),
+          acelZ: parseFloat(z.toFixed(2)),
+          vibracion: parseFloat(mag.toFixed(2))
+        }));
+      }
+    };
+    window.addEventListener('devicemotion', motionListenerRef.current);
+
+    orientationListenerRef.current = (e) => {
+      setSensores(prev => ({
+        ...prev,
+        pitch: e.beta !== null && e.beta !== undefined ? parseFloat(e.beta.toFixed(1)) : prev.pitch,
+        roll: e.gamma !== null && e.gamma !== undefined ? parseFloat(e.gamma.toFixed(1)) : prev.roll,
+        rumbo: e.alpha !== null && e.alpha !== undefined ? parseFloat(e.alpha.toFixed(1)) : prev.rumbo
+      }));
+    };
+    window.addEventListener('deviceorientation', orientationListenerRef.current);
+
     watchId.current = navigator.geolocation.watchPosition(
       (pos) => {
-        const latitud = pos.coords.latitude;
-        const longitud = pos.coords.longitude;
-        setUbicacion({ latitud, longitud });
-        setEstado('Transmitiendo datos GPS...');
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        const velKmH = pos.coords.speed !== null && pos.coords.speed >= 0 ? parseFloat((pos.coords.speed * 3.6).toFixed(1)) : 0;
+        const alt = pos.coords.altitude !== null ? parseFloat(pos.coords.altitude.toFixed(1)) : 0;
+        const head = pos.coords.heading !== null && !isNaN(pos.coords.heading) ? parseFloat(pos.coords.heading.toFixed(1)) : sensoresRef.current.rumbo;
+        const prec = pos.coords.accuracy !== null ? parseFloat(pos.coords.accuracy.toFixed(1)) : 0;
+        const temp = parseFloat((25.0 + (velKmH * 0.1) + (Math.random() * 1.5)).toFixed(1));
 
-        const datos = {
-          timestamp: new Date().toISOString(),
-          dispositivo_id: dispositivoId.trim(),
-          latitud: latitud,
-          longitud: longitud,
-          temperatura: 25.0 + Math.random() * 10,
-          vibracion: 0.5 + Math.random() * 1.5,
-          voltaje: 3.7
-        };
-        
-        fetch('/api/telemetria', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(datos)
-        }).catch(err => {
-          console.error('Error al enviar:', err);
+        setSensores(prev => ({
+          ...prev,
+          latitud: lat,
+          longitud: lon,
+          velocidad: velKmH,
+          altitud: alt,
+          rumbo: head,
+          precision: prec,
+          temperatura: temp
+        }));
+
+        setEstado('Transmitiendo telemetría en vivo...');
+
+        enviarPaquete({
+          latitud: lat,
+          longitud: lon,
+          velocidad: velKmH,
+          altitud: alt,
+          rumbo: head,
+          temperatura: temp
         });
       },
       (err) => {
@@ -60,52 +145,129 @@ export default function Simulador() {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+
+    intervaloEnvioRef.current = setInterval(() => {
+      if (sensoresRef.current.latitud !== null && sensoresRef.current.longitud !== null) {
+        enviarPaquete();
+      }
+    }, 3000);
+  };
+
+  const enviarPaquete = (overrides) => {
+    const s = { ...sensoresRef.current, ...overrides };
+    if (s.latitud === null || s.longitud === null) return;
+
+    const payload = {
+      timestamp: new Date().toISOString(),
+      dispositivo_id: dispositivoId.trim(),
+      latitud: s.latitud,
+      longitud: s.longitud,
+      velocidad: s.velocidad,
+      altitud: s.altitud,
+      rumbo: s.rumbo,
+      bateria: s.bateria,
+      voltaje: s.voltaje,
+      pitch: s.pitch,
+      roll: s.roll,
+      vibracion: s.vibracion,
+      aceleracion_x: s.acelX,
+      aceleracion_y: s.acelY,
+      aceleracion_z: s.acelZ,
+      temperatura: s.temperatura
+    };
+
+    fetch('/api/telemetria', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(err => console.error('Error al enviar:', err));
   };
 
   const detenerTransmision = () => {
     if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+    if (motionListenerRef.current) window.removeEventListener('devicemotion', motionListenerRef.current);
+    if (orientationListenerRef.current) window.removeEventListener('deviceorientation', orientationListenerRef.current);
+    if (intervaloEnvioRef.current) clearInterval(intervaloEnvioRef.current);
+    
     setConectado(false);
     setEstado('Inactivo');
-    setUbicacion(null);
   };
 
   return (
-    <div className="w-full h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-4">
-      <div className="bg-zinc-900 p-8 rounded-xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
-        <h1 className="text-3xl font-bold text-red-500 mb-2">Simulador ESP32</h1>
-        <p className="text-zinc-400 mb-8">Envía tu ubicación GPS o Fake GPS al servidor en tiempo real.</p>
+    <div className="w-full min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-4">
+      <div className="bg-zinc-900 p-6 sm:p-8 rounded-2xl shadow-2xl border border-zinc-800 max-w-lg w-full text-center my-8">
+        <h1 className="text-3xl font-bold text-red-500 mb-1">Telemetría Sensor Hub</h1>
+        <p className="text-zinc-400 mb-6 text-xs sm:text-sm">Captura y transmisión de sensores móviles en tiempo real</p>
 
-        <div className="mb-6 text-left">
-          <label className="block text-sm font-medium text-zinc-400 mb-2">
-            ID del Vehículo (Placa / Nombre)
+        <div className="mb-4 text-left">
+          <label className="block text-xs font-medium text-zinc-400 mb-1">
+            ID del Vehículo / Dispositivo
           </label>
           <input 
             type="text" 
             value={dispositivoId}
             onChange={(e) => setDispositivoId(e.target.value)}
             disabled={conectado}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors disabled:opacity-50"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-red-500 transition-colors disabled:opacity-50 font-mono text-sm"
             placeholder="Ej. camion-123"
           />
         </div>
 
-        <div className="mb-8">
-          <div className="text-sm text-zinc-500 mb-1">Estado</div>
-          <div className={`text-lg font-mono ${conectado ? 'text-green-400' : 'text-zinc-300'}`}>
+        <div className="mb-6 flex items-center justify-between bg-zinc-950 p-3 rounded-lg border border-zinc-800">
+          <span className="text-xs text-zinc-400">Estado</span>
+          <span className={`text-xs font-mono font-bold ${conectado ? 'text-green-400 animate-pulse' : 'text-zinc-400'}`}>
             {estado}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-6 text-left">
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Velocidad</span>
+            <span className="font-mono text-cyan-400 text-sm font-bold">{sensores.velocidad} km/h</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Altitud</span>
+            <span className="font-mono text-indigo-400 text-sm font-bold">{sensores.altitud} m</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Rumbo</span>
+            <span className="font-mono text-blue-400 text-sm font-bold">{sensores.rumbo}°</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Vibración Total</span>
+            <span className="font-mono text-yellow-400 text-sm font-bold">{sensores.vibracion} G</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Inclinación (Pitch)</span>
+            <span className="font-mono text-emerald-400 text-sm font-bold">{sensores.pitch}°</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Inclinación (Roll)</span>
+            <span className="font-mono text-teal-400 text-sm font-bold">{sensores.roll}°</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Temperatura</span>
+            <span className="font-mono text-orange-400 text-sm font-bold">{sensores.temperatura} °C</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Batería</span>
+            <span className="font-mono text-green-400 text-sm font-bold">{sensores.bateria} %</span>
+          </div>
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
+            <span className="text-[10px] text-zinc-500 block">Voltaje</span>
+            <span className="font-mono text-purple-400 text-sm font-bold">{sensores.voltaje} V</span>
           </div>
         </div>
 
-        {ubicacion && (
-          <div className="mb-8 p-4 bg-zinc-950 rounded-lg font-mono text-sm border border-zinc-800">
-            <div className="text-zinc-400 mb-2">Última coordenada enviada:</div>
-            <div className="text-blue-400">Lat: {ubicacion.latitud.toFixed(6)}</div>
-            <div className="text-green-400">Lon: {ubicacion.longitud.toFixed(6)}</div>
+        {sensores.latitud !== null && (
+          <div className="mb-6 p-3 bg-zinc-950 rounded-lg font-mono text-xs border border-zinc-800 text-left flex justify-between">
+            <span className="text-zinc-400">Lat: <b className="text-white">{sensores.latitud.toFixed(5)}</b></span>
+            <span className="text-zinc-400">Lon: <b className="text-white">{sensores.longitud?.toFixed(5)}</b></span>
           </div>
         )}
 
         {error && (
-          <div className="mb-8 p-3 bg-red-900 bg-opacity-30 border border-red-800 text-red-300 rounded-lg text-sm">
+          <div className="mb-6 p-3 bg-red-900 bg-opacity-30 border border-red-800 text-red-300 rounded-lg text-xs">
             {error}
           </div>
         )}
@@ -113,14 +275,14 @@ export default function Simulador() {
         {!conectado ? (
           <button 
             onClick={iniciarTransmision}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-colors shadow-lg"
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-xl transition-colors shadow-lg text-sm"
           >
-            Iniciar Transmisión
+            Iniciar Transmisión de Sensores
           </button>
         ) : (
           <button 
             onClick={detenerTransmision}
-            className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-bold py-4 px-4 rounded-xl transition-colors shadow-lg"
+            className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-bold py-3.5 px-4 rounded-xl transition-colors shadow-lg text-sm"
           >
             Detener Transmisión
           </button>

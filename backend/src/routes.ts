@@ -8,7 +8,6 @@ const dispositivosActivos = new Set<string>();
 
 export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
-  // Login
   fastify.post('/api/login', async (request, reply) => {
     const { username, password } = request.body as any;
 
@@ -24,7 +23,6 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
       return reply.status(401).send({ error: 'Contraseña incorrecta' });
     }
 
-    // Firmar Token
     const token = fastify.jwt.sign({ 
       id: usuario.id, 
       username: usuario.username, 
@@ -51,7 +49,16 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         ST_Y(ubicacion::geometry) as la,
         temperatura,
         vibracion,
-        voltaje
+        voltaje,
+        velocidad,
+        altitud,
+        rumbo,
+        bateria,
+        pitch,
+        roll,
+        aceleracion_x,
+        aceleracion_y,
+        aceleracion_z
       FROM telemetria
       WHERE timestamp >= (NOW() - INTERVAL '24 HOURS')
     `;
@@ -64,7 +71,6 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
     
     query += ` ORDER BY timestamp ASC`;
 
-
     try {
       const result = await db.query(query, params);
       return result.rows;
@@ -76,7 +82,24 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   fastify.post('/api/telemetria', async (request, reply) => {
     try {
-      const { timestamp, dispositivo_id, latitud, longitud, temperatura, vibracion, voltaje } = request.body as any;
+      const { 
+        timestamp, 
+        dispositivo_id, 
+        latitud, 
+        longitud, 
+        temperatura, 
+        vibracion, 
+        voltaje,
+        velocidad,
+        altitud,
+        rumbo,
+        bateria,
+        pitch,
+        roll,
+        aceleracion_x,
+        aceleracion_y,
+        aceleracion_z
+      } = request.body as any;
 
       if (!dispositivosActivos.has(dispositivo_id)) {
         if (dispositivosActivos.size >= MAX_DISPOSITIVOS_DIARIOS) {
@@ -86,21 +109,61 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
       }
 
       const query = `
-        INSERT INTO telemetria (timestamp, dispositivo_id, ubicacion, temperatura, vibracion, voltaje)
-        VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326), $5, $6, $7)
+        INSERT INTO telemetria (
+          timestamp, 
+          dispositivo_id, 
+          ubicacion, 
+          temperatura, 
+          vibracion, 
+          voltaje,
+          velocidad,
+          altitud,
+          rumbo,
+          bateria,
+          pitch,
+          roll,
+          aceleracion_x,
+          aceleracion_y,
+          aceleracion_z
+        )
+        VALUES (
+          $1, 
+          $2, 
+          ST_SetSRID(ST_MakePoint($3, $4), 4326), 
+          $5, 
+          $6, 
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16
+        )
       `;
       
       await db.query(query, [
-        timestamp,
+        timestamp || new Date().toISOString(),
         dispositivo_id,
         longitud,
         latitud,
-        temperatura,
-        vibracion,
-        voltaje
+        temperatura ?? null,
+        vibracion ?? null,
+        voltaje ?? null,
+        velocidad ?? null,
+        altitud ?? null,
+        rumbo ?? null,
+        bateria ?? null,
+        pitch ?? null,
+        roll ?? null,
+        aceleracion_x ?? null,
+        aceleracion_y ?? null,
+        aceleracion_z ?? null
       ]);
 
-      // Retransmitir a los clientes de websocket
       const broadcastData = JSON.stringify({ 
         lo: longitud, 
         la: latitud, 
@@ -108,10 +171,20 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         temperatura,
         vibracion,
         voltaje,
-        timestamp
+        velocidad,
+        altitud,
+        rumbo,
+        bateria,
+        pitch,
+        roll,
+        aceleracion_x,
+        aceleracion_y,
+        aceleracion_z,
+        timestamp: timestamp || new Date().toISOString()
       });
+
       for (const client of fastify.websocketServer.clients) {
-        if (client.readyState === 1) { // OPEN
+        if (client.readyState === 1) {
           client.send(broadcastData);
         }
       }
