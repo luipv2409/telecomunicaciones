@@ -34,6 +34,18 @@ He preparado la configuración completa de Docker para que el sistema sea 100% p
    docker compose up -d --build
    ```
 4. Acceder en el navegador:
-   - **Dashboard Web:** `http://localhost`
+   - **Dashboard Web (PC):** `http://localhost:8080`
+   - **Simulador / Celular (HTTPS para GPS):** `https://<IP-DE-TU-PC>:8443`
    - **API / WebSockets:** `http://localhost:3000`
    - **PostgreSQL / TimescaleDB:** `localhost:5432`
+
+
+---
+
+### Credenciales de acceso:
+| Usuario | Contraseña | Rol | Acceso |
+|---|---|---|---|
+| `admin` | `1234` | Administrador | Todos los vehículos y simulador |
+| `cliente1` | `1234` | Cliente | Camión-1 |
+| `cliente2` | `1234` | Cliente | Camión-2 |
+

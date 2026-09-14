@@ -20,7 +20,7 @@ function Login({ onLogin, alVolver }) {
       
       if (!res.ok) throw new Error(data.error || 'Error al iniciar sesión');
       
-      onLogin(data); // { token, rol, username }
+      onLogin(data);
     } catch (err) {
       setError(err.message);
     }
@@ -73,36 +73,74 @@ function Login({ onLogin, alVolver }) {
   );
 }
 
+const estiloMapa = {
+  version: 8,
+  sources: {
+    'osm-tiles': {
+      type: 'raster',
+      tiles: [
+        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      ],
+      tileSize: 256,
+      attribution: '&copy; OpenStreetMap'
+    }
+  },
+  layers: [
+    {
+      id: 'osm-tiles-layer',
+      type: 'raster',
+      source: 'osm-tiles',
+      minzoom: 0,
+      maxzoom: 19
+    }
+  ]
+};
+
 function MapaView({ auth, alVolver }) {
   const contenedorMapa = useRef(null);
   const referenciaMapa = useRef(null);
   const vehiculosRef = useRef({}); 
   const [vehiculosUI, setVehiculosUI] = useState({}); 
-  const [filtrosVisibles, setFiltrosVisibles] = useState({}); // { id: boolean }
+  const [filtrosVisibles, setFiltrosVisibles] = useState({});
 
   const colores = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
   useEffect(() => {
-    referenciaMapa.current = new maplibregl.Map({
+    if (!contenedorMapa.current) return;
+
+    const mapa = new maplibregl.Map({
       container: contenedorMapa.current,
-      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      style: estiloMapa,
       center: [-66.16, -17.41],
       zoom: 13
     });
 
-    referenciaMapa.current.on('error', (e) => console.error('MapLibre error:', e));
+    referenciaMapa.current = mapa;
+    mapa.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
 
-    referenciaMapa.current.on('load', async () => {
-      await cargarHistorialDeHoy();
+    mapa.on('load', () => {
+      mapa.resize();
+      setTimeout(() => mapa.resize(), 300);
+      cargarHistorialDeHoy();
       iniciarConexionServidor();
     });
 
+    const manejarResize = () => mapa.resize();
+    window.addEventListener('resize', manejarResize);
+
+    const intervaloChequeo = setInterval(() => {
+      setVehiculosUI({ ...vehiculosRef.current });
+    }, 5000);
+
     return () => {
-      referenciaMapa.current.remove();
+      clearInterval(intervaloChequeo);
+      window.removeEventListener('resize', manejarResize);
+      mapa.remove();
     };
   }, []);
 
-  // Efecto para actualizar la visibilidad en MapLibre cuando los filtros cambian
   useEffect(() => {
     if (!referenciaMapa.current || !referenciaMapa.current.isStyleLoaded()) return;
 
@@ -110,6 +148,8 @@ function MapaView({ auth, alVolver }) {
       const isVisible = filtrosVisibles[id] ? 'visible' : 'none';
       if (referenciaMapa.current.getLayer(`capa-linea-${id}`)) {
         referenciaMapa.current.setLayoutProperty(`capa-linea-${id}`, 'visibility', isVisible);
+      }
+      if (referenciaMapa.current.getLayer(`capa-puntos-${id}`)) {
         referenciaMapa.current.setLayoutProperty(`capa-puntos-${id}`, 'visibility', isVisible);
       }
       
@@ -133,18 +173,22 @@ function MapaView({ auth, alVolver }) {
 
   const registrarOActualizarVehiculo = (datos) => {
     const { dispositivo_id, lo, la, temperatura, vibracion, voltaje, timestamp } = datos;
-    const nuevaCoordenada = [lo, la];
+    const numLon = parseFloat(lo);
+    const numLat = parseFloat(la);
+    if (isNaN(numLon) || isNaN(numLat)) return;
+
+    const nuevaCoordenada = [numLon, numLat];
+    const tiempoMs = timestamp ? new Date(timestamp).getTime() : Date.now();
     const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
     
-    // Postgres devuelve NUMERIC como string, así que lo parseamos a Float
     const tempNum = typeof temperatura === 'string' ? parseFloat(temperatura) : temperatura;
     const vibNum = typeof vibracion === 'string' ? parseFloat(vibracion) : vibracion;
 
     const puntoPropiedades = {
       dispositivo_id,
       hora: horaLegible,
-      temperatura: tempNum !== undefined && tempNum !== null ? tempNum.toFixed(1) : 'N/A',
-      vibracion: vibNum !== undefined && vibNum !== null ? vibNum.toFixed(2) : 'N/A'
+      temperatura: tempNum !== undefined && tempNum !== null ? Number(tempNum).toFixed(1) : 'N/A',
+      vibracion: vibNum !== undefined && vibNum !== null ? Number(vibNum).toFixed(2) : 'N/A'
     };
 
     let vehiculo = vehiculosRef.current[dispositivo_id];
@@ -154,77 +198,105 @@ function MapaView({ auth, alVolver }) {
       const sourceId = `ruta-${dispositivo_id}`;
       
       const featuresIniciales = [
-        { type: 'Feature', geometry: { type: 'LineString', coordinates: [nuevaCoordenada] }, properties: {} },
-        { type: 'Feature', geometry: { type: 'Point', coordinates: nuevaCoordenada }, properties: puntoPropiedades }
+        { 
+          type: 'Feature', 
+          geometry: { type: 'LineString', coordinates: [nuevaCoordenada, nuevaCoordenada] }, 
+          properties: {} 
+        },
+        { 
+          type: 'Feature', 
+          geometry: { type: 'Point', coordinates: nuevaCoordenada }, 
+          properties: puntoPropiedades 
+        }
       ];
 
-      referenciaMapa.current.addSource(sourceId, {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: featuresIniciales }
-      });
+      if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
+        referenciaMapa.current.addSource(sourceId, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: featuresIniciales }
+        });
 
-      referenciaMapa.current.addLayer({
-        id: `capa-linea-${dispositivo_id}`,
-        type: 'line',
-        source: sourceId,
-        filter: ['==', '$type', 'LineString'],
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': color, 'line-width': 4, 'line-opacity': 0.8 }
-      });
+        referenciaMapa.current.addLayer({
+          id: `capa-linea-${dispositivo_id}`,
+          type: 'line',
+          source: sourceId,
+          filter: ['==', '$type', 'LineString'],
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': color, 'line-width': 4, 'line-opacity': 0.8 }
+        });
 
-      const capaPuntosId = `capa-puntos-${dispositivo_id}`;
-      referenciaMapa.current.addLayer({
-        id: capaPuntosId,
-        type: 'circle',
-        source: sourceId,
-        filter: ['==', '$type', 'Point'],
-        paint: {
-          'circle-radius': 6,
-          'circle-color': color,
-          'circle-opacity': 0.5,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#ffffff'
-        }
-      });
+        const capaPuntosId = `capa-puntos-${dispositivo_id}`;
+        referenciaMapa.current.addLayer({
+          id: capaPuntosId,
+          type: 'circle',
+          source: sourceId,
+          filter: ['==', '$type', 'Point'],
+          paint: {
+            'circle-radius': 6,
+            'circle-color': color,
+            'circle-opacity': 0.8,
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#ffffff'
+          }
+        });
 
-      referenciaMapa.current.on('click', capaPuntosId, (e) => {
-        const props = e.features[0].properties;
-        const coord = e.features[0].geometry.coordinates.slice();
-        
-        new maplibregl.Popup()
-          .setLngLat(coord)
-          .setHTML(`
-            <div class="text-zinc-900 p-1">
-              <strong class="text-red-600 block border-b pb-1 mb-1">${props.dispositivo_id}</strong>
-              <div class="text-xs">
-                <p>🕒 Hora: <b>${props.hora}</b></p>
-                <p>🔥 Temp: <b>${props.temperatura} °C</b></p>
-                <p>〰️ Vib: <b>${props.vibracion} G</b></p>
+        referenciaMapa.current.on('click', capaPuntosId, (e) => {
+          const props = e.features[0].properties;
+          const coord = e.features[0].geometry.coordinates.slice();
+          
+          new maplibregl.Popup()
+            .setLngLat(coord)
+            .setHTML(`
+              <div style="color: #18181b; padding: 6px; font-family: sans-serif;">
+                <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 4px;">${props.dispositivo_id}</strong>
+                <div style="font-size: 12px; line-height: 1.5;">
+                  <div>🕒 Hora: <b>${props.hora}</b></div>
+                  <div>🔥 Temp: <b>${props.temperatura} °C</b></div>
+                  <div>〰️ Vib: <b>${props.vibracion} G</b></div>
+                </div>
               </div>
-            </div>
-          `)
-          .addTo(referenciaMapa.current);
-      });
+            `)
+            .addTo(referenciaMapa.current);
+        });
 
-      referenciaMapa.current.on('mouseenter', capaPuntosId, () => referenciaMapa.current.getCanvas().style.cursor = 'pointer');
-      referenciaMapa.current.on('mouseleave', capaPuntosId, () => referenciaMapa.current.getCanvas().style.cursor = '');
+        referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
+          referenciaMapa.current.getCanvas().style.cursor = 'pointer';
+        });
+        referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
+          referenciaMapa.current.getCanvas().style.cursor = '';
+        });
+      }
 
       const elementoMarcador = document.createElement('div');
-      elementoMarcador.className = 'w-5 h-5 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] cursor-pointer z-50 relative';
+      elementoMarcador.style.width = '20px';
+      elementoMarcador.style.height = '20px';
+      elementoMarcador.style.borderRadius = '50%';
       elementoMarcador.style.backgroundColor = color;
+      elementoMarcador.style.border = '3px solid #ffffff';
+      elementoMarcador.style.boxShadow = `0 0 12px ${color}, 0 0 4px #000000`;
+      elementoMarcador.style.cursor = 'pointer';
       
       const marker = new maplibregl.Marker({ element: elementoMarcador })
         .setLngLat(nuevaCoordenada)
-        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id}</strong> (Actual)`))
+        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id} (Actual)</strong>`))
         .addTo(referenciaMapa.current);
 
       vehiculo = {
-        id: dispositivo_id, color, marker, coords: [nuevaCoordenada], features: featuresIniciales, sourceId
+        id: dispositivo_id,
+        color,
+        marker,
+        coords: [nuevaCoordenada],
+        features: featuresIniciales,
+        sourceId,
+        ultimoTimestamp: tiempoMs
       };
       vehiculosRef.current[dispositivo_id] = vehiculo;
       
-      // Habilitar filtro por defecto
       setFiltrosVisibles(prev => ({ ...prev, [dispositivo_id]: true }));
+
+      if (Object.keys(vehiculosRef.current).length === 1) {
+        referenciaMapa.current.flyTo({ center: nuevaCoordenada, zoom: 15 });
+      }
     } else {
       vehiculo.marker.setLngLat(nuevaCoordenada);
       vehiculo.coords.push(nuevaCoordenada);
@@ -236,15 +308,21 @@ function MapaView({ auth, alVolver }) {
         properties: puntoPropiedades
       });
       
-      const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
-      if (fuenteDatos) {
-        fuenteDatos.setData({ type: 'FeatureCollection', features: vehiculo.features });
+      if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
+        const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
+        if (fuenteDatos) {
+          fuenteDatos.setData({
+            type: 'FeatureCollection',
+            features: vehiculo.features
+          });
+        }
       }
+      vehiculo.ultimoTimestamp = tiempoMs;
     }
 
     vehiculo.ultimaAct = horaLegible;
-    if (tempNum !== undefined && tempNum !== null) vehiculo.temperatura = tempNum.toFixed(1);
-    if (vibNum !== undefined && vibNum !== null) vehiculo.vibracion = vibNum.toFixed(2);
+    if (tempNum !== undefined && tempNum !== null) vehiculo.temperatura = Number(tempNum).toFixed(1);
+    if (vibNum !== undefined && vibNum !== null) vehiculo.vibracion = Number(vibNum).toFixed(2);
     if (voltaje !== undefined) vehiculo.voltaje = voltaje;
   };
 
@@ -255,15 +333,13 @@ function MapaView({ auth, alVolver }) {
       });
       const datosHistorial = await res.json();
       
-      if (datosHistorial.length > 0) {
-        // Agrupar e insertar secuencialmente para construir la línea
+      if (Array.isArray(datosHistorial) && datosHistorial.length > 0) {
         datosHistorial.forEach(punto => {
           registrarOActualizarVehiculo(punto);
         });
 
-        // Centrar en el último punto recibido general
         const ultimo = datosHistorial[datosHistorial.length - 1];
-        referenciaMapa.current.panTo([ultimo.lo, ultimo.la]);
+        referenciaMapa.current.panTo([parseFloat(ultimo.lo), parseFloat(ultimo.la)]);
         setVehiculosUI({ ...vehiculosRef.current });
       }
     } catch (e) {
@@ -289,27 +365,31 @@ function MapaView({ auth, alVolver }) {
     if (vehiculo && vehiculo.coords.length > 0) {
       const ultimaCoord = vehiculo.coords[vehiculo.coords.length - 1];
       referenciaMapa.current.flyTo({ center: ultimaCoord, zoom: 16 });
+      vehiculo.marker.togglePopup();
     }
   };
 
+  const ahora = Date.now();
+
   return (
-    <div className="w-full h-screen relative bg-zinc-950">
-      <div ref={contenedorMapa} className="absolute inset-0" />
+    <div className="w-full h-screen relative bg-zinc-950 overflow-hidden">
+      <div 
+        ref={contenedorMapa} 
+        className="absolute inset-0 w-full h-full" 
+        style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 0 }} 
+      />
       
       <button 
         onClick={alVolver} 
-        className="absolute top-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold py-2 px-4 rounded-lg shadow-lg transition-colors z-10"
+        className="absolute top-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold py-2 px-4 rounded-lg shadow-xl transition-colors z-20"
       >
         ← Volver al Menú
       </button>
 
-      <div className="absolute top-20 left-4 w-80 max-h-[80vh] flex flex-col bg-zinc-900 bg-opacity-90 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-10">
+      <div className="absolute top-20 left-4 w-80 max-h-[80vh] flex flex-col bg-zinc-900 bg-opacity-95 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-20">
         <div className="p-4 border-b border-zinc-800">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-xl font-bold text-red-500">Mi Flota</h1>
-            <span className="flex items-center gap-2 text-xs text-green-400 font-mono bg-green-400 bg-opacity-10 px-2 py-1 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>EN LÍNEA
-            </span>
           </div>
           <div className="text-xs text-zinc-400 flex justify-between items-center">
             <span>Usuario: <b className="text-white">{auth.username}</b> ({auth.rol})</span>
@@ -319,45 +399,53 @@ function MapaView({ auth, alVolver }) {
 
         <div className="p-4 overflow-y-auto flex-1">
           {Object.keys(vehiculosUI).length === 0 ? (
-            <div className="text-zinc-500 text-sm italic text-center py-4">No hay datos de hoy...</div>
+            <div className="text-zinc-500 text-sm italic text-center py-4">Esperando datos de telemetría...</div>
           ) : (
             <div className="flex flex-col gap-3">
-              {Object.values(vehiculosUI).map((vehiculo) => (
-                <div 
-                  key={vehiculo.id} 
-                  className={`bg-zinc-950 border rounded-lg p-3 transition-colors ${filtrosVisibles[vehiculo.id] ? 'border-zinc-700' : 'border-zinc-900 opacity-50'}`}
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <input 
-                      type="checkbox" 
-                      checked={!!filtrosVisibles[vehiculo.id]}
-                      onChange={() => alternarFiltro(vehiculo.id)}
-                      className="w-4 h-4 accent-red-500 cursor-pointer"
-                    />
-                    <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
-                    <div 
-                      className="font-bold text-white cursor-pointer hover:underline flex-1"
-                      onClick={() => centrarEnVehiculo(vehiculo.id)}
-                    >
-                      {vehiculo.id}
+              {Object.values(vehiculosUI).map((vehiculo) => {
+                const activo = vehiculo.ultimoTimestamp && (ahora - vehiculo.ultimoTimestamp < 30000);
+                return (
+                  <div 
+                    key={vehiculo.id} 
+                    className={`bg-zinc-950 border rounded-lg p-3 transition-colors ${filtrosVisibles[vehiculo.id] ? 'border-zinc-700' : 'border-zinc-900 opacity-50'}`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <input 
+                        type="checkbox" 
+                        checked={!!filtrosVisibles[vehiculo.id]}
+                        onChange={() => alternarFiltro(vehiculo.id)}
+                        className="w-4 h-4 accent-red-500 cursor-pointer"
+                      />
+                      <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
+                      <div 
+                        className="font-bold text-white cursor-pointer hover:underline flex-1"
+                        onClick={() => centrarEnVehiculo(vehiculo.id)}
+                      >
+                        {vehiculo.id}
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${activo ? 'bg-green-900 text-green-300 animate-pulse' : 'bg-zinc-800 text-zinc-400'}`}>
+                        {activo ? 'EN LÍNEA' : 'OFFLINE'}
+                      </span>
                     </div>
-                    <div className="text-xs text-zinc-500">{vehiculo.ultimaAct}</div>
+                    
+                    {filtrosVisibles[vehiculo.id] && (
+                      <div className="grid grid-cols-2 gap-2 text-xs pl-7 mt-2">
+                        <div className="bg-zinc-900 p-1.5 rounded">
+                          <span className="text-zinc-500 block">Temp</span>
+                          <span className="font-mono text-orange-400">{vehiculo.temperatura ? vehiculo.temperatura : 'N/A'} °C</span>
+                        </div>
+                        <div className="bg-zinc-900 p-1.5 rounded">
+                          <span className="text-zinc-500 block">Vibración</span>
+                          <span className="font-mono text-yellow-400">{vehiculo.vibracion ? vehiculo.vibracion : 'N/A'} G</span>
+                        </div>
+                        <div className="col-span-2 text-[11px] text-zinc-500 text-right">
+                          Último: {vehiculo.ultimaAct}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  
-                  {filtrosVisibles[vehiculo.id] && (
-                    <div className="grid grid-cols-2 gap-2 text-xs pl-7">
-                      <div className="bg-zinc-900 p-1.5 rounded">
-                        <span className="text-zinc-500 block">Temp</span>
-                        <span className="font-mono text-orange-400">{vehiculo.temperatura ? vehiculo.temperatura : 'N/A'}</span>
-                      </div>
-                      <div className="bg-zinc-900 p-1.5 rounded">
-                        <span className="text-zinc-500 block">Vibración</span>
-                        <span className="font-mono text-yellow-400">{vehiculo.vibracion ? vehiculo.vibracion : 'N/A'}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -367,8 +455,8 @@ function MapaView({ auth, alVolver }) {
 }
 
 export default function App() {
-  const [modo, setModo] = useState('menu'); // 'menu', 'mapa', 'simulador'
-  const [auth, setAuth] = useState(null); // { token, username, rol }
+  const [modo, setModo] = useState('menu');
+  const [auth, setAuth] = useState(null);
 
   if (modo === 'mapa') {
     if (!auth) {

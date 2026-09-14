@@ -34,7 +34,6 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
     return { token, rol: usuario.rol, username: usuario.username };
   });
 
-  // Obtener historial del día actual según permisos
   fastify.get('/api/flota/hoy', async (request, reply) => {
     try {
       await request.jwtVerify();
@@ -44,12 +43,6 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
     
     const user = request.user as any;
     
-    // Calcular inicio y fin del día actual
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const manana = new Date(hoy);
-    manana.setDate(manana.getDate() + 1);
-
     let query = `
       SELECT 
         dispositivo_id,
@@ -60,17 +53,17 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         vibracion,
         voltaje
       FROM telemetria
-      WHERE timestamp >= $1 AND timestamp < $2
+      WHERE timestamp >= (NOW() - INTERVAL '24 HOURS')
     `;
-    const params: any[] = [hoy.toISOString(), manana.toISOString()];
+    const params: any[] = [];
 
     if (user.rol !== 'admin') {
-      // Si es cliente, solo ver sus vehículos asignados
-      query += ` AND dispositivo_id IN (SELECT dispositivo_id FROM vehiculos_usuarios WHERE usuario_id = $3)`;
+      query += ` AND dispositivo_id IN (SELECT dispositivo_id FROM vehiculos_usuarios WHERE usuario_id = $1)`;
       params.push(user.id);
     }
     
     query += ` ORDER BY timestamp ASC`;
+
 
     try {
       const result = await db.query(query, params);
