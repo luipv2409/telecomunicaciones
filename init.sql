@@ -47,3 +47,23 @@ INSERT INTO vehiculos_usuarios (dispositivo_id, usuario_id) VALUES
 ('Camion-1', 2),
 ('Camion-2', 3)
 ON CONFLICT (dispositivo_id, usuario_id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS geocercas (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    poligono GEOMETRY(Polygon, 4326) NOT NULL,
+    usuario_id INTEGER REFERENCES usuarios(id)
+);
+
+CREATE TABLE IF NOT EXISTS alertas (
+    id SERIAL PRIMARY KEY,
+    dispositivo_id VARCHAR(50) NOT NULL,
+    tipo VARCHAR(50) NOT NULL,
+    mensaje TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    ubicacion GEOMETRY(Point, 4326) NOT NULL,
+    leida BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_alertas_dispositivo_tiempo ON alertas (dispositivo_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_geocercas_poligono ON geocercas USING GIST (poligono);

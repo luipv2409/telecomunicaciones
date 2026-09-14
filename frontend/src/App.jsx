@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import Simulador from './Simulador';
+import Dashboard from './Dashboard';
+import Historial from './Historial';
+import Geocercas from './Geocercas';
 
 function Login({ onLogin, alVolver }) {
   const [username, setUsername] = useState('');
@@ -105,7 +108,7 @@ function MapaView({ auth, alVolver }) {
   const [vehiculosUI, setVehiculosUI] = useState({}); 
   const [filtrosVisibles, setFiltrosVisibles] = useState({});
 
-  const colores = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+  const colores = ['#06b6d4', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444'];
 
   useEffect(() => {
     if (!contenedorMapa.current) return;
@@ -246,7 +249,12 @@ function MapaView({ auth, alVolver }) {
           source: sourceId,
           filter: ['==', '$type', 'LineString'],
           layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': color, 'line-width': 4, 'line-opacity': 0.8 }
+          paint: { 
+            'line-color': color, 
+            'line-width': 3, 
+            'line-dasharray': [3, 2],
+            'line-opacity': 0.65 
+          }
         });
 
         const capaPuntosId = `capa-puntos-${dispositivo_id}`;
@@ -256,10 +264,10 @@ function MapaView({ auth, alVolver }) {
           source: sourceId,
           filter: ['==', '$type', 'Point'],
           paint: {
-            'circle-radius': 6,
+            'circle-radius': 4.5,
             'circle-color': color,
-            'circle-opacity': 0.85,
-            'circle-stroke-width': 2,
+            'circle-opacity': 0.75,
+            'circle-stroke-width': 1.5,
             'circle-stroke-color': '#ffffff'
           }
         });
@@ -296,13 +304,48 @@ function MapaView({ auth, alVolver }) {
       }
 
       const elementoMarcador = document.createElement('div');
-      elementoMarcador.style.width = '20px';
-      elementoMarcador.style.height = '20px';
-      elementoMarcador.style.borderRadius = '50%';
-      elementoMarcador.style.backgroundColor = color;
-      elementoMarcador.style.border = '3px solid #ffffff';
-      elementoMarcador.style.boxShadow = `0 0 12px ${color}, 0 0 4px #000000`;
+      elementoMarcador.style.display = 'flex';
+      elementoMarcador.style.flexDirection = 'column';
+      elementoMarcador.style.alignItems = 'center';
       elementoMarcador.style.cursor = 'pointer';
+
+      const iconoContenedor = document.createElement('div');
+      iconoContenedor.style.width = '34px';
+      iconoContenedor.style.height = '34px';
+      iconoContenedor.style.borderRadius = '50%';
+      iconoContenedor.style.backgroundColor = '#18181b';
+      iconoContenedor.style.border = `2.5px solid ${color}`;
+      iconoContenedor.style.boxShadow = `0 0 12px ${color}88, 0 2px 6px rgba(0,0,0,0.8)`;
+      iconoContenedor.style.display = 'flex';
+      iconoContenedor.style.alignItems = 'center';
+      iconoContenedor.style.justifyContent = 'center';
+      iconoContenedor.style.padding = '4px';
+      iconoContenedor.style.transition = 'transform 0.3s ease';
+
+      const imgCamion = document.createElement('img');
+      imgCamion.src = '/camion.svg';
+      imgCamion.style.width = '20px';
+      imgCamion.style.height = '20px';
+      imgCamion.style.objectFit = 'contain';
+      imgCamion.style.filter = 'invert(1) drop-shadow(0 0 1px white)';
+
+      iconoContenedor.appendChild(imgCamion);
+
+      const etiquetaBadge = document.createElement('div');
+      etiquetaBadge.innerText = dispositivo_id;
+      etiquetaBadge.style.fontSize = '10px';
+      etiquetaBadge.style.fontWeight = 'bold';
+      etiquetaBadge.style.color = '#ffffff';
+      etiquetaBadge.style.backgroundColor = '#09090bcc';
+      etiquetaBadge.style.border = `1px solid ${color}aa`;
+      etiquetaBadge.style.borderRadius = '4px';
+      etiquetaBadge.style.padding = '1px 5px';
+      etiquetaBadge.style.marginTop = '2px';
+      etiquetaBadge.style.whiteSpace = 'nowrap';
+      etiquetaBadge.style.boxShadow = '0 2px 4px rgba(0,0,0,0.5)';
+
+      elementoMarcador.appendChild(iconoContenedor);
+      elementoMarcador.appendChild(etiquetaBadge);
       
       const marker = new maplibregl.Marker({ element: elementoMarcador })
         .setLngLat(nuevaCoordenada)
@@ -313,6 +356,7 @@ function MapaView({ auth, alVolver }) {
         id: dispositivo_id,
         color,
         marker,
+        iconoContenedor,
         coords: [nuevaCoordenada],
         features: featuresIniciales,
         sourceId,
@@ -348,6 +392,10 @@ function MapaView({ auth, alVolver }) {
       }
       vehiculo.ultimoTimestamp = tiempoMs;
       Object.assign(vehiculo, puntoPropiedades);
+
+      if (rumbo && Number(rumbo) > 0 && vehiculo.iconoContenedor) {
+        vehiculo.iconoContenedor.style.transform = `rotate(${rumbo}deg)`;
+      }
     }
 
     vehiculo.ultimaAct = horaLegible;
@@ -509,7 +557,7 @@ export default function App() {
     if (!auth) {
       return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
     }
-    return <MapaView auth={auth} alVolver={() => { setModo('menu'); setAuth(null); }} />;
+    return <MapaView auth={auth} alVolver={() => { setModo('menu'); }} />;
   }
 
   if (modo === 'simulador') {
@@ -526,6 +574,21 @@ export default function App() {
     );
   }
 
+  if (modo === 'dashboard') {
+    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    return <Dashboard auth={auth} alVolver={() => { setModo('menu'); }} />;
+  }
+
+  if (modo === 'historial') {
+    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    return <Historial auth={auth} alVolver={() => { setModo('menu'); }} />;
+  }
+
+  if (modo === 'geocercas') {
+    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    return <Geocercas auth={auth} alVolver={() => { setModo('menu'); }} />;
+  }
+
   return (
     <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 font-sans">
       <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
@@ -535,19 +598,52 @@ export default function App() {
         <div className="flex flex-col gap-4">
           <button 
             onClick={() => setModo('mapa')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
-            <span className="text-2xl">🗺️</span>
-            Ingresar al Panel de Flotas
+            <span className="text-xl">🗺️</span>
+            Monitor en Tiempo Real
+          </button>
+
+          <button 
+            onClick={() => setModo('dashboard')}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+          >
+            <span className="text-xl">📊</span>
+            Dashboard Analítico (KPIs)
+          </button>
+
+          <button 
+            onClick={() => setModo('historial')}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+          >
+            <span className="text-xl">⏪</span>
+            Historial de Rutas
+          </button>
+
+          <button 
+            onClick={() => setModo('geocercas')}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+          >
+            <span className="text-xl">📍</span>
+            Configurar Geocercas
           </button>
 
           <button 
             onClick={() => setModo('simulador')}
-            className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 mt-4"
           >
-            <span className="text-2xl">📱</span>
+            <span className="text-xl">📱</span>
             Simular Sensores Móviles
           </button>
+          
+          {auth && (
+            <button 
+              onClick={() => setAuth(null)}
+              className="w-full mt-2 text-zinc-500 hover:text-zinc-300 text-sm underline pb-2"
+            >
+              Cerrar Sesión ({auth.username})
+            </button>
+          )}
         </div>
       </div>
     </div>

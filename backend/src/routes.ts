@@ -80,6 +80,85 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   });
 
+  fastify.get('/api/flota/dispositivos', async (request, reply) => {
+    try {
+      const result = await db.query('SELECT DISTINCT dispositivo_id FROM telemetria ORDER BY dispositivo_id');
+      return result.rows.map((row: any) => row.dispositivo_id);
+    } catch(err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error BD' });
+    }
+  });
+
+  fastify.get('/api/flota/historial', async (request, reply) => {
+    const { dispositivo_id, inicio, fin } = request.query as any;
+    if (!dispositivo_id || !inicio || !fin) {
+      return reply.status(400).send({ error: 'Faltan parámetros' });
+    }
+    const query = `
+      SELECT 
+        timestamp,
+        ST_X(ubicacion::geometry) as lo,
+        ST_Y(ubicacion::geometry) as la,
+        velocidad, rumbo, bateria
+      FROM telemetria
+      WHERE dispositivo_id = $1 AND timestamp >= $2 AND timestamp <= $3
+      ORDER BY timestamp ASC
+    `;
+    try {
+      const result = await db.query(query, [dispositivo_id, inicio, fin]);
+      return result.rows;
+    } catch(err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error BD' });
+    }
+  });
+
+  fastify.get('/api/flota/kpis', async (request, reply) => {
+    try {
+      const query = `
+        SELECT 
+          dispositivo_id,
+          MAX(velocidad) as vel_max,
+          AVG(velocidad) as vel_promedio,
+          COUNT(*) as puntos_registrados
+        FROM telemetria
+        WHERE timestamp >= (NOW() - INTERVAL '24 HOURS')
+        GROUP BY dispositivo_id
+      `;
+      const result = await db.query(query);
+      return result.rows;
+    } catch(err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error BD' });
+    }
+  });
+
+  fastify.get('/api/geocercas', async (request, reply) => {
+    try {
+      const result = await db.query('SELECT id, nombre, ST_AsGeoJSON(poligono)::json as poligono FROM geocercas');
+      return result.rows;
+    } catch(err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error BD' });
+    }
+  });
+
+  fastify.post('/api/geocercas', async (request, reply) => {
+    const { nombre, poligono } = request.body as any;
+    try {
+      const query = `
+        INSERT INTO geocercas (nombre, poligono)
+        VALUES ($1, ST_GeomFromGeoJSON($2)) RETURNING id
+      `;
+      const result = await db.query(query, [nombre, JSON.stringify(poligono)]);
+      return { id: result.rows[0].id, estado: 'ok' };
+    } catch(err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error BD' });
+    }
+  });
+
   fastify.post('/api/telemetria', async (request, reply) => {
     try {
       const { 
@@ -187,6 +266,76 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         if (client.readyState === 1) {
           client.send(broadcastData);
         }
+      }
+
+      // Motor de Alertas
+      try {
+        const geocercaQuery = `
+          SELECT nombre FROM geocercas 
+          WHERE ST_Contains(poligono, ST_SetSRID(ST_MakePoint($1, $2), 4326))
+        `;
+        const geocercas = await db.query(geocercaQuery, [longitud, latitud]);
+        
+        if (geocercas.rows.length > 0) {
+          for (const gc of geocercas.rows) {
+            const checkAlert = await db.query(`
+              SELECT id FROM alertas 
+              WHERE dispositivo_id = $1 AND tipo = 'geocerca' AND mensaje LIKE $2 AND timestamp > (NOW() - INTERVAL '5 MINUTES')
+            `, [dispositivo_id, `%${gc.nombre}%`]);
+
+            if (checkAlert.rows.length === 0) {
+              const msg = `Vehículo dentro de geocerca: ${gc.nombre}`;
+              const timeStr = timestamp || new Date().toISOString();
+              await db.query(`
+                INSERT INTO alertas (dispositivo_id, tipo, mensaje, timestamp, ubicacion)
+                VALUES ($1, 'geocerca', $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))
+              `, [dispositivo_id, msg, timeStr, longitud, latitud]);
+
+              const alertData = JSON.stringify({ 
+                alerta: true,
+                dispositivo_id,
+                tipo: 'geocerca',
+                mensaje: msg,
+                timestamp: timeStr
+              });
+
+              for (const client of fastify.websocketServer.clients) {
+                if (client.readyState === 1) {
+                  client.send(alertData);
+                }
+              }
+            }
+          }
+        }
+
+        if (velocidad > 80) {
+          const checkSpeedAlert = await db.query(`
+            SELECT id FROM alertas 
+            WHERE dispositivo_id = $1 AND tipo = 'exceso_velocidad' AND timestamp > (NOW() - INTERVAL '5 MINUTES')
+          `, [dispositivo_id]);
+          if (checkSpeedAlert.rows.length === 0) {
+            const msg = `Exceso de velocidad: ${velocidad} km/h`;
+            const timeStr = timestamp || new Date().toISOString();
+            await db.query(`
+                INSERT INTO alertas (dispositivo_id, tipo, mensaje, timestamp, ubicacion)
+                VALUES ($1, 'exceso_velocidad', $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))
+              `, [dispositivo_id, msg, timeStr, longitud, latitud]);
+              const alertData = JSON.stringify({ 
+                alerta: true,
+                dispositivo_id,
+                tipo: 'exceso_velocidad',
+                mensaje: msg,
+                timestamp: timeStr
+              });
+              for (const client of fastify.websocketServer.clients) {
+                if (client.readyState === 1) {
+                  client.send(alertData);
+                }
+              }
+          }
+        }
+      } catch (alertErr) {
+        console.error('Error generando alertas:', alertErr);
       }
 
       return { estado: 'ok' };
