@@ -1,27 +1,96 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import '@fastify/jwt';
 import { db } from './db';
+import bcrypt from 'bcryptjs';
+
+const MAX_DISPOSITIVOS_DIARIOS = 10;
+const dispositivosActivos = new Set<string>();
 
 export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  fastify.get('/historico/:dispositivo_id', async (request, reply) => {
-    const { dispositivo_id } = request.params as { dispositivo_id: string };
-    const { inicio, fin } = request.query as { inicio: string, fin: string };
 
-    const query = `
-      SELECT ST_AsGeoJSON(ST_MakeLine(ubicacion ORDER BY timestamp ASC)) AS ruta
-      FROM telemetria
-      WHERE dispositivo_id = $1
-        AND timestamp >= $2
-        AND timestamp <= $3;
-    `;
+  // Login
+  fastify.post('/api/login', async (request, reply) => {
+    const { username, password } = request.body as any;
 
-    const result = await db.query(query, [dispositivo_id, inicio, fin]);
+    const result = await db.query('SELECT * FROM usuarios WHERE username = $1', [username]);
+    const usuario = result.rows[0];
+
+    if (!usuario) {
+      return reply.status(401).send({ error: 'Usuario no encontrado' });
+    }
+
+    const match = await bcrypt.compare(password, usuario.password_hash);
+    if (!match) {
+      return reply.status(401).send({ error: 'Contraseña incorrecta' });
+    }
+
+    // Firmar Token
+    const token = fastify.jwt.sign({ 
+      id: usuario.id, 
+      username: usuario.username, 
+      rol: usuario.rol 
+    });
+
+    return { token, rol: usuario.rol, username: usuario.username };
+  });
+
+  // Obtener historial del día actual según permisos
+  fastify.get('/api/flota/hoy', async (request, reply) => {
+    try {
+      await request.jwtVerify();
+    } catch (err) {
+      return reply.status(401).send({ error: 'No autorizado' });
+    }
     
-    return result.rows[0];
+    const user = request.user as any;
+    
+    // Calcular inicio y fin del día actual
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const manana = new Date(hoy);
+    manana.setDate(manana.getDate() + 1);
+
+    let query = `
+      SELECT 
+        dispositivo_id,
+        timestamp,
+        ST_X(ubicacion::geometry) as lo,
+        ST_Y(ubicacion::geometry) as la,
+        temperatura,
+        vibracion,
+        voltaje
+      FROM telemetria
+      WHERE timestamp >= $1 AND timestamp < $2
+    `;
+    const params: any[] = [hoy.toISOString(), manana.toISOString()];
+
+    if (user.rol !== 'admin') {
+      // Si es cliente, solo ver sus vehículos asignados
+      query += ` AND dispositivo_id IN (SELECT dispositivo_id FROM vehiculos_usuarios WHERE usuario_id = $3)`;
+      params.push(user.id);
+    }
+    
+    query += ` ORDER BY timestamp ASC`;
+
+    try {
+      const result = await db.query(query, params);
+      return result.rows;
+    } catch (err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Error en base de datos' });
+    }
   });
 
   fastify.post('/api/telemetria', async (request, reply) => {
     try {
       const { timestamp, dispositivo_id, latitud, longitud, temperatura, vibracion, voltaje } = request.body as any;
+
+      if (!dispositivosActivos.has(dispositivo_id)) {
+        if (dispositivosActivos.size >= MAX_DISPOSITIVOS_DIARIOS) {
+          return reply.status(429).send({ error: 'Límite de vehículos alcanzado en este servidor.' });
+        }
+        dispositivosActivos.add(dispositivo_id);
+      }
 
       const query = `
         INSERT INTO telemetria (timestamp, dispositivo_id, ubicacion, temperatura, vibracion, voltaje)

@@ -1,28 +1,99 @@
 import { useState, useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import Simulador from './Simulador';
 
-function MapaView({ alVolver }) {
+function Login({ onLogin, alVolver }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.error || 'Error al iniciar sesión');
+      
+      onLogin(data); // { token, rol, username }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4">
+      <button 
+        onClick={alVolver} 
+        className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg z-10 border border-zinc-700"
+      >
+        ← Volver
+      </button>
+      
+      <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-sm w-full">
+        <h2 className="text-2xl font-bold text-red-500 mb-6 text-center">Acceso a Flotas</h2>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label className="text-zinc-400 text-sm mb-1 block">Usuario</label>
+            <input 
+              type="text" 
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-500"
+              required 
+            />
+          </div>
+          <div>
+            <label className="text-zinc-400 text-sm mb-1 block">Contraseña</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-500"
+              required 
+            />
+          </div>
+          
+          {error && <div className="text-red-400 text-sm text-center bg-red-900 bg-opacity-20 p-2 rounded">{error}</div>}
+          
+          <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg mt-2">
+            Ingresar
+          </button>
+        </form>
+        <div className="mt-6 text-xs text-zinc-500 text-center">
+          Usuarios de prueba: admin, cliente1, cliente2 (Pass: 1234)
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapaView({ auth, alVolver }) {
   const contenedorMapa = useRef(null);
   const referenciaMapa = useRef(null);
-  const vehiculosRef = useRef({}); // Diccionario de { id: { marker, coords, features, sourceId, color, ... } }
-  const [vehiculosUI, setVehiculosUI] = useState({}); // Para renderizar el dashboard
+  const vehiculosRef = useRef({}); 
+  const [vehiculosUI, setVehiculosUI] = useState({}); 
+  const [filtrosVisibles, setFiltrosVisibles] = useState({}); // { id: boolean }
 
-  // Colores para asignar dinámicamente a nuevos camiones
   const colores = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
   useEffect(() => {
     referenciaMapa.current = new maplibregl.Map({
       container: contenedorMapa.current,
       style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-      center: [-66.16, -17.41], // Centrado cerca de Bolivia
-      zoom: 14
+      center: [-66.16, -17.41],
+      zoom: 13
     });
 
     referenciaMapa.current.on('error', (e) => console.error('MapLibre error:', e));
 
-    referenciaMapa.current.on('load', () => {
-      // Iniciar websocket solo cuando el mapa base cargó
+    referenciaMapa.current.on('load', async () => {
+      await cargarHistorialDeHoy();
       iniciarConexionServidor();
     });
 
@@ -31,178 +102,183 @@ function MapaView({ alVolver }) {
     };
   }, []);
 
+  // Efecto para actualizar la visibilidad en MapLibre cuando los filtros cambian
+  useEffect(() => {
+    if (!referenciaMapa.current || !referenciaMapa.current.isStyleLoaded()) return;
+
+    Object.keys(filtrosVisibles).forEach(id => {
+      const isVisible = filtrosVisibles[id] ? 'visible' : 'none';
+      if (referenciaMapa.current.getLayer(`capa-linea-${id}`)) {
+        referenciaMapa.current.setLayoutProperty(`capa-linea-${id}`, 'visibility', isVisible);
+        referenciaMapa.current.setLayoutProperty(`capa-puntos-${id}`, 'visibility', isVisible);
+      }
+      
+      const v = vehiculosRef.current[id];
+      if (v && v.marker) {
+        const el = v.marker.getElement();
+        el.style.display = isVisible === 'none' ? 'none' : 'block';
+      }
+    });
+  }, [filtrosVisibles, vehiculosUI]);
+
+  const alternarFiltro = (id) => {
+    setFiltrosVisibles(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const mostrarTodos = () => {
+    const nuevosFiltros = {};
+    Object.keys(vehiculosUI).forEach(id => nuevosFiltros[id] = true);
+    setFiltrosVisibles(nuevosFiltros);
+  };
+
+  const registrarOActualizarVehiculo = (datos) => {
+    const { dispositivo_id, lo, la, temperatura, vibracion, voltaje, timestamp } = datos;
+    const nuevaCoordenada = [lo, la];
+    const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+    
+    // Postgres devuelve NUMERIC como string, así que lo parseamos a Float
+    const tempNum = typeof temperatura === 'string' ? parseFloat(temperatura) : temperatura;
+    const vibNum = typeof vibracion === 'string' ? parseFloat(vibracion) : vibracion;
+
+    const puntoPropiedades = {
+      dispositivo_id,
+      hora: horaLegible,
+      temperatura: tempNum !== undefined && tempNum !== null ? tempNum.toFixed(1) : 'N/A',
+      vibracion: vibNum !== undefined && vibNum !== null ? vibNum.toFixed(2) : 'N/A'
+    };
+
+    let vehiculo = vehiculosRef.current[dispositivo_id];
+
+    if (!vehiculo) {
+      const color = colores[Object.keys(vehiculosRef.current).length % colores.length];
+      const sourceId = `ruta-${dispositivo_id}`;
+      
+      const featuresIniciales = [
+        { type: 'Feature', geometry: { type: 'LineString', coordinates: [nuevaCoordenada] }, properties: {} },
+        { type: 'Feature', geometry: { type: 'Point', coordinates: nuevaCoordenada }, properties: puntoPropiedades }
+      ];
+
+      referenciaMapa.current.addSource(sourceId, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: featuresIniciales }
+      });
+
+      referenciaMapa.current.addLayer({
+        id: `capa-linea-${dispositivo_id}`,
+        type: 'line',
+        source: sourceId,
+        filter: ['==', '$type', 'LineString'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': color, 'line-width': 4, 'line-opacity': 0.8 }
+      });
+
+      const capaPuntosId = `capa-puntos-${dispositivo_id}`;
+      referenciaMapa.current.addLayer({
+        id: capaPuntosId,
+        type: 'circle',
+        source: sourceId,
+        filter: ['==', '$type', 'Point'],
+        paint: {
+          'circle-radius': 6,
+          'circle-color': color,
+          'circle-opacity': 0.5,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff'
+        }
+      });
+
+      referenciaMapa.current.on('click', capaPuntosId, (e) => {
+        const props = e.features[0].properties;
+        const coord = e.features[0].geometry.coordinates.slice();
+        
+        new maplibregl.Popup()
+          .setLngLat(coord)
+          .setHTML(`
+            <div class="text-zinc-900 p-1">
+              <strong class="text-red-600 block border-b pb-1 mb-1">${props.dispositivo_id}</strong>
+              <div class="text-xs">
+                <p>🕒 Hora: <b>${props.hora}</b></p>
+                <p>🔥 Temp: <b>${props.temperatura} °C</b></p>
+                <p>〰️ Vib: <b>${props.vibracion} G</b></p>
+              </div>
+            </div>
+          `)
+          .addTo(referenciaMapa.current);
+      });
+
+      referenciaMapa.current.on('mouseenter', capaPuntosId, () => referenciaMapa.current.getCanvas().style.cursor = 'pointer');
+      referenciaMapa.current.on('mouseleave', capaPuntosId, () => referenciaMapa.current.getCanvas().style.cursor = '');
+
+      const elementoMarcador = document.createElement('div');
+      elementoMarcador.className = 'w-5 h-5 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] cursor-pointer z-50 relative';
+      elementoMarcador.style.backgroundColor = color;
+      
+      const marker = new maplibregl.Marker({ element: elementoMarcador })
+        .setLngLat(nuevaCoordenada)
+        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id}</strong> (Actual)`))
+        .addTo(referenciaMapa.current);
+
+      vehiculo = {
+        id: dispositivo_id, color, marker, coords: [nuevaCoordenada], features: featuresIniciales, sourceId
+      };
+      vehiculosRef.current[dispositivo_id] = vehiculo;
+      
+      // Habilitar filtro por defecto
+      setFiltrosVisibles(prev => ({ ...prev, [dispositivo_id]: true }));
+    } else {
+      vehiculo.marker.setLngLat(nuevaCoordenada);
+      vehiculo.coords.push(nuevaCoordenada);
+      vehiculo.features[0].geometry.coordinates = vehiculo.coords;
+      
+      vehiculo.features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: nuevaCoordenada },
+        properties: puntoPropiedades
+      });
+      
+      const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
+      if (fuenteDatos) {
+        fuenteDatos.setData({ type: 'FeatureCollection', features: vehiculo.features });
+      }
+    }
+
+    vehiculo.ultimaAct = horaLegible;
+    if (tempNum !== undefined && tempNum !== null) vehiculo.temperatura = tempNum.toFixed(1);
+    if (vibNum !== undefined && vibNum !== null) vehiculo.vibracion = vibNum.toFixed(2);
+    if (voltaje !== undefined) vehiculo.voltaje = voltaje;
+  };
+
+  const cargarHistorialDeHoy = async () => {
+    try {
+      const res = await fetch('/api/flota/hoy', {
+        headers: { 'Authorization': `Bearer ${auth.token}` }
+      });
+      const datosHistorial = await res.json();
+      
+      if (datosHistorial.length > 0) {
+        // Agrupar e insertar secuencialmente para construir la línea
+        datosHistorial.forEach(punto => {
+          registrarOActualizarVehiculo(punto);
+        });
+
+        // Centrar en el último punto recibido general
+        const ultimo = datosHistorial[datosHistorial.length - 1];
+        referenciaMapa.current.panTo([ultimo.lo, ultimo.la]);
+        setVehiculosUI({ ...vehiculosRef.current });
+      }
+    } catch (e) {
+      console.error('Error cargando historial', e);
+    }
+  };
+
   const iniciarConexionServidor = () => {
     const protocolo = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const conexionWebsocket = new WebSocket(`${protocolo}//${window.location.host}/ws`);
     
     conexionWebsocket.onmessage = (evento) => {
       const datos = JSON.parse(evento.data);
-      console.log('Datos recibidos del servidor:', datos);
-      
-      const { dispositivo_id, lo, la, temperatura, vibracion, voltaje, timestamp } = datos;
-
-      if (dispositivo_id && lo && la) {
-        const nuevaCoordenada = [lo, la];
-        const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
-        
-        // Propiedades del punto histórico
-        const puntoPropiedades = {
-          dispositivo_id,
-          hora: horaLegible,
-          temperatura: temperatura?.toFixed(1) || 'N/A',
-          vibracion: vibracion?.toFixed(2) || 'N/A'
-        };
-
-        let vehiculo = vehiculosRef.current[dispositivo_id];
-        let esNuevo = false;
-
-        if (!vehiculo) {
-          esNuevo = true;
-          // Asignar un color según cuántos vehículos haya
-          const color = colores[Object.keys(vehiculosRef.current).length % colores.length];
-
-          const sourceId = `ruta-${dispositivo_id}`;
-          
-          // El Feature 0 será la Línea, los siguientes serán los Puntos
-          const featuresIniciales = [
-            {
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates: [nuevaCoordenada] },
-              properties: {}
-            },
-            {
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: nuevaCoordenada },
-              properties: puntoPropiedades
-            }
-          ];
-
-          // 1. Crear el Source 
-          referenciaMapa.current.addSource(sourceId, {
-            type: 'geojson',
-            data: {
-              type: 'FeatureCollection',
-              features: featuresIniciales
-            }
-          });
-
-          // 2. Crear Capa de Línea
-          referenciaMapa.current.addLayer({
-            id: `capa-linea-${dispositivo_id}`,
-            type: 'line',
-            source: sourceId,
-            filter: ['==', '$type', 'LineString'],
-            layout: {
-              'line-join': 'round',
-              'line-cap': 'round'
-            },
-            paint: {
-              'line-color': color,
-              'line-width': 4,
-              'line-opacity': 0.8
-            }
-          });
-
-          // 3. Crear Capa de Puntos (Invisibles o pequeños para cliquear)
-          const capaPuntosId = `capa-puntos-${dispositivo_id}`;
-          referenciaMapa.current.addLayer({
-            id: capaPuntosId,
-            type: 'circle',
-            source: sourceId,
-            filter: ['==', '$type', 'Point'],
-            paint: {
-              'circle-radius': 8,
-              'circle-color': color,
-              'circle-opacity': 0.5,
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff'
-            }
-          });
-
-          // 4. Configurar Eventos Click para los Puntos
-          referenciaMapa.current.on('click', capaPuntosId, (e) => {
-            const props = e.features[0].properties;
-            const coord = e.features[0].geometry.coordinates.slice();
-            
-            const htmlInfo = `
-              <div class="text-zinc-900 p-1">
-                <strong class="text-red-600 block border-b pb-1 mb-1">${props.dispositivo_id}</strong>
-                <div class="text-xs">
-                  <p>🕒 Hora: <b>${props.hora}</b></p>
-                  <p>🔥 Temp: <b>${props.temperatura} °C</b></p>
-                  <p>〰️ Vibración: <b>${props.vibracion} G</b></p>
-                </div>
-              </div>
-            `;
-
-            new maplibregl.Popup()
-              .setLngLat(coord)
-              .setHTML(htmlInfo)
-              .addTo(referenciaMapa.current);
-          });
-
-          referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
-            referenciaMapa.current.getCanvas().style.cursor = 'pointer';
-          });
-          referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
-            referenciaMapa.current.getCanvas().style.cursor = '';
-          });
-
-          // 5. Crear el Marcador Principal (El vehículo actual)
-          const elementoMarcador = document.createElement('div');
-          elementoMarcador.className = 'w-5 h-5 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] cursor-pointer transition-transform hover:scale-125 z-50 relative';
-          elementoMarcador.style.backgroundColor = color;
-          
-          const marker = new maplibregl.Marker({ element: elementoMarcador })
-            .setLngLat(nuevaCoordenada)
-            .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id}</strong> (Actual)`))
-            .addTo(referenciaMapa.current);
-
-          vehiculo = {
-            id: dispositivo_id,
-            color,
-            marker,
-            coords: [nuevaCoordenada],
-            features: featuresIniciales,
-            sourceId
-          };
-          vehiculosRef.current[dispositivo_id] = vehiculo;
-        } else {
-          // Si ya existe, actualizar posición y ruta
-          vehiculo.marker.setLngLat(nuevaCoordenada);
-          vehiculo.coords.push(nuevaCoordenada);
-          
-          // Actualizar LineString (Feature 0)
-          vehiculo.features[0].geometry.coordinates = vehiculo.coords;
-          
-          // Añadir nuevo Point
-          vehiculo.features.push({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: nuevaCoordenada },
-            properties: puntoPropiedades
-          });
-          
-          const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
-          if (fuenteDatos) {
-            fuenteDatos.setData({
-              type: 'FeatureCollection',
-              features: vehiculo.features
-            });
-          }
-        }
-
-        // Actualizar datos del sensor para el UI del Dashboard
-        vehiculo.ultimaAct = horaLegible;
-        if (temperatura !== undefined) vehiculo.temperatura = temperatura;
-        if (vibracion !== undefined) vehiculo.vibracion = vibracion;
-        if (voltaje !== undefined) vehiculo.voltaje = voltaje;
-
-        // Centrar mapa si es el primer dato del primer vehículo
-        if (esNuevo && Object.keys(vehiculosRef.current).length === 1) {
-          referenciaMapa.current.panTo(nuevaCoordenada);
-        }
-
-        // Forzar render de React para actualizar el Dashboard lateral
+      if (datos.dispositivo_id && datos.lo && datos.la) {
+        registrarOActualizarVehiculo(datos);
         setVehiculosUI({ ...vehiculosRef.current });
       }
     };
@@ -213,16 +289,13 @@ function MapaView({ alVolver }) {
     if (vehiculo && vehiculo.coords.length > 0) {
       const ultimaCoord = vehiculo.coords[vehiculo.coords.length - 1];
       referenciaMapa.current.flyTo({ center: ultimaCoord, zoom: 16 });
-      vehiculo.marker.togglePopup();
     }
   };
 
   return (
-    <div className="w-full h-screen relative bg-zinc-950" style={{ width: '100vw', height: '100vh' }}>
-      {/* Contenedor del Mapa */}
-      <div ref={contenedorMapa} className="absolute inset-0" style={{ width: '100%', height: '100%' }} />
+    <div className="w-full h-screen relative bg-zinc-950">
+      <div ref={contenedorMapa} className="absolute inset-0" />
       
-      {/* Botón Volver */}
       <button 
         onClick={alVolver} 
         className="absolute top-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold py-2 px-4 rounded-lg shadow-lg transition-colors z-10"
@@ -230,48 +303,64 @@ function MapaView({ alVolver }) {
         ← Volver al Menú
       </button>
 
-      {/* Dashboard Lateral (Sidebar) */}
-      <div className="absolute top-20 left-4 w-80 max-h-[80vh] overflow-y-auto bg-zinc-900 bg-opacity-90 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl p-4 z-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-bold text-red-500">TRACE-MIN Flotas</h1>
-          <span className="flex items-center gap-2 text-xs text-green-400 font-mono bg-green-400 bg-opacity-10 px-2 py-1 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
-            EN LÍNEA
-          </span>
+      <div className="absolute top-20 left-4 w-80 max-h-[80vh] flex flex-col bg-zinc-900 bg-opacity-90 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-10">
+        <div className="p-4 border-b border-zinc-800">
+          <div className="flex items-center justify-between mb-2">
+            <h1 className="text-xl font-bold text-red-500">Mi Flota</h1>
+            <span className="flex items-center gap-2 text-xs text-green-400 font-mono bg-green-400 bg-opacity-10 px-2 py-1 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>EN LÍNEA
+            </span>
+          </div>
+          <div className="text-xs text-zinc-400 flex justify-between items-center">
+            <span>Usuario: <b className="text-white">{auth.username}</b> ({auth.rol})</span>
+            <button onClick={mostrarTodos} className="text-blue-400 hover:text-blue-300 underline">Ver Todos</button>
+          </div>
         </div>
 
-        {Object.keys(vehiculosUI).length === 0 ? (
-          <div className="text-zinc-500 text-sm italic text-center py-8">
-            Esperando conexión de vehículos...
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {Object.values(vehiculosUI).map((vehiculo) => (
-              <div 
-                key={vehiculo.id} 
-                className="bg-zinc-950 bg-opacity-50 border border-zinc-800 rounded-lg p-3 hover:border-zinc-600 transition-colors cursor-pointer"
-                onClick={() => centrarEnVehiculo(vehiculo.id)}
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
-                  <div className="font-bold text-white">{vehiculo.id}</div>
-                  <div className="text-xs text-zinc-500 ml-auto">{vehiculo.ultimaAct}</div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-zinc-900 p-2 rounded">
-                    <div className="text-zinc-500 mb-1">Temperatura</div>
-                    <div className="font-mono text-orange-400">{vehiculo.temperatura ? vehiculo.temperatura.toFixed(1) + ' °C' : 'N/A'}</div>
+        <div className="p-4 overflow-y-auto flex-1">
+          {Object.keys(vehiculosUI).length === 0 ? (
+            <div className="text-zinc-500 text-sm italic text-center py-4">No hay datos de hoy...</div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {Object.values(vehiculosUI).map((vehiculo) => (
+                <div 
+                  key={vehiculo.id} 
+                  className={`bg-zinc-950 border rounded-lg p-3 transition-colors ${filtrosVisibles[vehiculo.id] ? 'border-zinc-700' : 'border-zinc-900 opacity-50'}`}
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <input 
+                      type="checkbox" 
+                      checked={!!filtrosVisibles[vehiculo.id]}
+                      onChange={() => alternarFiltro(vehiculo.id)}
+                      className="w-4 h-4 accent-red-500 cursor-pointer"
+                    />
+                    <div className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: vehiculo.color, color: vehiculo.color }}></div>
+                    <div 
+                      className="font-bold text-white cursor-pointer hover:underline flex-1"
+                      onClick={() => centrarEnVehiculo(vehiculo.id)}
+                    >
+                      {vehiculo.id}
+                    </div>
+                    <div className="text-xs text-zinc-500">{vehiculo.ultimaAct}</div>
                   </div>
-                  <div className="bg-zinc-900 p-2 rounded">
-                    <div className="text-zinc-500 mb-1">Vibración</div>
-                    <div className="font-mono text-yellow-400">{vehiculo.vibracion ? vehiculo.vibracion.toFixed(2) + ' G' : 'N/A'}</div>
-                  </div>
+                  
+                  {filtrosVisibles[vehiculo.id] && (
+                    <div className="grid grid-cols-2 gap-2 text-xs pl-7">
+                      <div className="bg-zinc-900 p-1.5 rounded">
+                        <span className="text-zinc-500 block">Temp</span>
+                        <span className="font-mono text-orange-400">{vehiculo.temperatura ? vehiculo.temperatura : 'N/A'}</span>
+                      </div>
+                      <div className="bg-zinc-900 p-1.5 rounded">
+                        <span className="text-zinc-500 block">Vibración</span>
+                        <span className="font-mono text-yellow-400">{vehiculo.vibracion ? vehiculo.vibracion : 'N/A'}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -279,9 +368,13 @@ function MapaView({ alVolver }) {
 
 export default function App() {
   const [modo, setModo] = useState('menu'); // 'menu', 'mapa', 'simulador'
+  const [auth, setAuth] = useState(null); // { token, username, rol }
 
   if (modo === 'mapa') {
-    return <MapaView alVolver={() => setModo('menu')} />;
+    if (!auth) {
+      return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    }
+    return <MapaView auth={auth} alVolver={() => { setModo('menu'); setAuth(null); }} />;
   }
 
   if (modo === 'simulador') {
@@ -310,7 +403,7 @@ export default function App() {
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-2xl">🗺️</span>
-            Ver Mapa de Flotas
+            Ingresar al Panel de Flotas
           </button>
 
           <button 

@@ -2,11 +2,13 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
+#include "esp_spiffs.h"
 
 struct DatosTelemetria {
     int64_t marca_tiempo;
@@ -17,7 +19,7 @@ struct DatosTelemetria {
     float voltaje;
 };
 
-#define CAPACIDAD_BUFFER 100
+#define CAPACIDAD_BUFFER 2000
 
 class BufferCircular {
 private:
@@ -27,10 +29,16 @@ private:
     bool lleno = false;
 public:
     void insertar(const DatosTelemetria& datos) {
-        buffer[cabeza] = datos;
         if (lleno) {
+            // Persistencia en caso de buffer lleno (señal caída mucho tiempo)
+            FILE* f = fopen("/spiffs/respaldo.bin", "a");
+            if (f) {
+                fwrite(&buffer[cola], sizeof(DatosTelemetria), 1, f);
+                fclose(f);
+            }
             cola = (cola + 1) % CAPACIDAD_BUFFER;
         }
+        buffer[cabeza] = datos;
         cabeza = (cabeza + 1) % CAPACIDAD_BUFFER;
         lleno = cabeza == cola;
     }
@@ -92,11 +100,30 @@ float leer_adc_promediado(adc1_channel_t canal) {
     return (float)voltaje_mv;
 }
 
+double calcular_distancia(double lat1, double lon1, double lat2, double lon2) {
+    const double R = 6371e3; 
+    const double pi = 3.14159265358979323846;
+    double phi1 = lat1 * pi / 180.0;
+    double phi2 = lat2 * pi / 180.0;
+    double delta_phi = (lat2 - lat1) * pi / 180.0;
+    double delta_lambda = (lon2 - lon1) * pi / 180.0;
+
+    double a = sin(delta_phi/2) * sin(delta_phi/2) +
+               cos(phi1) * cos(phi2) *
+               sin(delta_lambda/2) * sin(delta_lambda/2);
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
+    return R * c; 
+}
+
 void tarea_adquisicion_sensores(void *parametros) {
     inicializar_uart_gnss();
     inicializar_adc();
 
     uint8_t datos_uart[TAMANO_BUFFER_UART];
+    
+    double ult_lat = 0.0, ult_lon = 0.0;
+    float ult_temp = 0.0;
+    int64_t ult_tiempo_envio = 0;
 
     while (1) {
         int longitud = uart_read_bytes(UART_GNSS_NUM, datos_uart, TAMANO_BUFFER_UART - 1, 20 / portTICK_PERIOD_MS);
@@ -106,16 +133,33 @@ void tarea_adquisicion_sensores(void *parametros) {
 
         DatosTelemetria nueva_lectura;
         nueva_lectura.marca_tiempo = xTaskGetTickCount(); 
-        nueva_lectura.latitud = -12.0464; 
-        nueva_lectura.longitud = -77.0428;
+        
+        // Simulación de movimiento/lectura
+        nueva_lectura.latitud = -17.3822 + (esp_random() % 100) * 0.00001; 
+        nueva_lectura.longitud = -66.1518 + (esp_random() % 100) * 0.00001;
         
         nueva_lectura.temperatura = leer_adc_promediado(CANAL_ADC_TEMP);
         nueva_lectura.vibracion = leer_adc_promediado(CANAL_ADC_VIB);
         nueva_lectura.voltaje = leer_adc_promediado(CANAL_ADC_VOLT);
 
-        buffer_telemetria.insertar(nueva_lectura);
+        bool enviar = false;
+        double distancia = calcular_distancia(ult_lat, ult_lon, nueva_lectura.latitud, nueva_lectura.longitud);
+        
+        if (distancia > 50.0) enviar = true; // Movimiento > 50m
+        if (fabs(nueva_lectura.temperatura - ult_temp) > 2.0) enviar = true; // Delta Temp > 2°C
+        if (nueva_lectura.vibracion > 1.5) enviar = true; // Impacto detectado
+        if (nueva_lectura.marca_tiempo - ult_tiempo_envio > pdMS_TO_TICKS(300000)) enviar = true; // Heartbeat 5 min
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // Si se cumple alguna condición o es la primera lectura
+        if (enviar || ult_tiempo_envio == 0) {
+            buffer_telemetria.insertar(nueva_lectura);
+            ult_lat = nueva_lectura.latitud;
+            ult_lon = nueva_lectura.longitud;
+            ult_temp = nueva_lectura.temperatura;
+            ult_tiempo_envio = nueva_lectura.marca_tiempo;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500)); // Muestreo relajado
     }
 }
 

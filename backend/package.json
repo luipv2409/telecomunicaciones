@@ -8,11 +8,14 @@
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
-    "fastify": "^4.24.3",
+    "@fastify/jwt": "^8.0.0",
     "@fastify/websocket": "^8.2.0",
+    "bcryptjs": "^3.0.3",
+    "fastify": "^4.24.3",
     "pg": "^8.11.3"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.8.10",
     "@types/pg": "^8.10.9",
     "ts-node": "^10.9.1",
