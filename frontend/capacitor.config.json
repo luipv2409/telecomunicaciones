@@ -1,0 +1,17 @@
+{
+  "appId": "com.tracemin.telemetria",
+  "appName": "TRACE-MIN",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "plugins": {
+    "Geolocation": {
+      "permissions": ["location", "coarseLocation"]
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

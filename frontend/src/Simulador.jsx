@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+import { getApiUrl } from './config';
 
 export default function Simulador() {
   const [conectado, setConectado] = useState(false);
@@ -24,11 +27,15 @@ export default function Simulador() {
     temperatura: 25.0
   });
 
+  const [paquetesEnviados, setPaquetesEnviados] = useState(0);
+
   const watchId = useRef(null);
+  const isCapacitorWatch = useRef(false);
   const motionListenerRef = useRef(null);
   const orientationListenerRef = useRef(null);
   const sensoresRef = useRef(sensores);
   const intervaloEnvioRef = useRef(null);
+  const ultimoEnvioMsRef = useRef(0);
 
   useEffect(() => {
     sensoresRef.current = sensores;
@@ -52,32 +59,55 @@ export default function Simulador() {
     };
   }, []);
 
-  const iniciarTransmision = async () => {
-    if (!navigator.geolocation) {
-      setError('Geolocalización no soportada en este dispositivo.');
-      return;
-    }
+  const actualizarPosicion = (coords) => {
+    if (!coords) return;
+    const lat = coords.latitude;
+    const lon = coords.longitude;
+    const velKmH = coords.speed !== null && coords.speed >= 0 ? parseFloat((coords.speed * 3.6).toFixed(1)) : 0;
+    const alt = coords.altitude !== null ? parseFloat(coords.altitude.toFixed(1)) : 0;
+    const head = coords.heading !== null && !isNaN(coords.heading) ? parseFloat(coords.heading.toFixed(1)) : sensoresRef.current.rumbo;
+    const prec = coords.accuracy !== null ? parseFloat(coords.accuracy.toFixed(1)) : 0;
+    const temp = parseFloat((25.0 + (velKmH * 0.1) + (Math.random() * 1.5)).toFixed(1));
 
+    setSensores(prev => ({
+      ...prev,
+      latitud: lat,
+      longitud: lon,
+      velocidad: velKmH,
+      altitud: alt,
+      rumbo: head,
+      precision: prec,
+      temperatura: temp
+    }));
+
+    setEstado('Transmitiendo en tiempo real (1s)...');
+
+    enviarPaquete({
+      latitud: lat,
+      longitud: lon,
+      velocidad: velKmH,
+      altitud: alt,
+      rumbo: head,
+      temperatura: temp
+    });
+  };
+
+  const iniciarTransmision = async () => {
     if (!dispositivoId.trim()) {
       setError('Debes ingresar un ID de dispositivo.');
       return;
     }
 
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-      try {
-        await DeviceMotionEvent.requestPermission();
-      } catch (e) {}
-    }
-
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        await DeviceOrientationEvent.requestPermission();
-      } catch (e) {}
-    }
-
     setError(null);
-    setEstado('Conectado. Adquiriendo sensores...');
+    setEstado('Conectando GPS y sensores...');
     setConectado(true);
+
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      try { await DeviceMotionEvent.requestPermission(); } catch (e) {}
+    }
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try { await DeviceOrientationEvent.requestPermission(); } catch (e) {}
+    }
 
     motionListenerRef.current = (e) => {
       const acc = e.acceleration || e.accelerationIncludingGravity;
@@ -107,55 +137,89 @@ export default function Simulador() {
     };
     window.addEventListener('deviceorientation', orientationListenerRef.current);
 
-    watchId.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        const velKmH = pos.coords.speed !== null && pos.coords.speed >= 0 ? parseFloat((pos.coords.speed * 3.6).toFixed(1)) : 0;
-        const alt = pos.coords.altitude !== null ? parseFloat(pos.coords.altitude.toFixed(1)) : 0;
-        const head = pos.coords.heading !== null && !isNaN(pos.coords.heading) ? parseFloat(pos.coords.heading.toFixed(1)) : sensoresRef.current.rumbo;
-        const prec = pos.coords.accuracy !== null ? parseFloat(pos.coords.accuracy.toFixed(1)) : 0;
-        const temp = parseFloat((25.0 + (velKmH * 0.1) + (Math.random() * 1.5)).toFixed(1));
+    const isNative = typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
 
-        setSensores(prev => ({
-          ...prev,
-          latitud: lat,
-          longitud: lon,
-          velocidad: velKmH,
-          altitud: alt,
-          rumbo: head,
-          precision: prec,
-          temperatura: temp
-        }));
+    if (isNative) {
+      try {
+        const perm = await Geolocation.requestPermissions();
+        if (perm.location === 'denied') {
+          setError('Permiso de ubicación denegado en el dispositivo.');
+          setConectado(false);
+          setEstado('Permiso denegado');
+          return;
+        }
 
-        setEstado('Transmitiendo telemetría en vivo...');
+        try {
+          const currentPos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 5000 });
+          if (currentPos && currentPos.coords) {
+            actualizarPosicion(currentPos.coords);
+          }
+        } catch (posErr) {}
 
-        enviarPaquete({
-          latitud: lat,
-          longitud: lon,
-          velocidad: velKmH,
-          altitud: alt,
-          rumbo: head,
-          temperatura: temp
-        });
-      },
-      (err) => {
-        setError(`Error de GPS: ${err.message}`);
-        setEstado('Error de GPS');
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+        const id = await Geolocation.watchPosition(
+          { enableHighAccuracy: true },
+          (pos, err) => {
+            if (err) {
+              setError(`Error de GPS nativo: ${err.message}`);
+              return;
+            }
+            if (pos && pos.coords) {
+              actualizarPosicion(pos.coords);
+            }
+          }
+        );
+        watchId.current = id;
+        isCapacitorWatch.current = true;
+      } catch (nativeErr) {
+        setError(`Error iniciando GPS nativo: ${nativeErr.message}`);
+      }
+    } else {
+      if (!navigator.geolocation) {
+        setError('Geolocalización no soportada o bloqueada por HTTP. Usa la APK instalada o HTTPS.');
+        setConectado(false);
+        setEstado('GPS no disponible');
+        return;
+      }
+      isCapacitorWatch.current = false;
+      watchId.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          actualizarPosicion(pos.coords);
+        },
+        (err) => {
+          if (err.message && err.message.includes('secure origins')) {
+            setError('El navegador bloquea el GPS sobre HTTP no seguro. Usa la APK instalada o entra por HTTPS (puerto 8443).');
+          } else {
+            setError(`Error de GPS: ${err.message}`);
+          }
+          setEstado('Error de GPS');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
 
-    intervaloEnvioRef.current = setInterval(() => {
+    intervaloEnvioRef.current = setInterval(async () => {
+      if (isNative) {
+        try {
+          const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 3000 });
+          if (p && p.coords) {
+            actualizarPosicion(p.coords);
+          }
+        } catch(e) {}
+      }
       if (sensoresRef.current.latitud !== null && sensoresRef.current.longitud !== null) {
         enviarPaquete();
       }
-    }, 3000);
+    }, 1000);
   };
 
   const enviarPaquete = (overrides) => {
+    const ahora = Date.now();
+    if (ahora - ultimoEnvioMsRef.current < 600) {
+      return;
+    }
     const s = { ...sensoresRef.current, ...overrides };
     if (s.latitud === null || s.longitud === null) return;
+    ultimoEnvioMsRef.current = ahora;
 
     const payload = {
       timestamp: new Date().toISOString(),
@@ -176,15 +240,24 @@ export default function Simulador() {
       temperatura: s.temperatura
     };
 
-    fetch('/api/telemetria', {
+    fetch(getApiUrl('/api/telemetria'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
+    }).then(res => {
+      if (res.ok) setPaquetesEnviados(p => p + 1);
     }).catch(err => console.error('Error al enviar:', err));
   };
 
   const detenerTransmision = () => {
-    if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+    if (watchId.current) {
+      if (isCapacitorWatch.current) {
+        Geolocation.clearWatch({ id: watchId.current }).catch(() => {});
+      } else if (navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId.current);
+      }
+      watchId.current = null;
+    }
     if (motionListenerRef.current) window.removeEventListener('devicemotion', motionListenerRef.current);
     if (orientationListenerRef.current) window.removeEventListener('deviceorientation', orientationListenerRef.current);
     if (intervaloEnvioRef.current) clearInterval(intervaloEnvioRef.current);
@@ -220,7 +293,16 @@ export default function Simulador() {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-6 text-left">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-4 text-left">
+          <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg col-span-2 sm:col-span-3">
+            <span className="text-[10px] text-zinc-500 block">Coordenadas GPS (Lat / Lon)</span>
+            <span className="font-mono text-emerald-400 text-xs font-bold truncate block">
+              {sensores.latitud !== null ? `${sensores.latitud.toFixed(6)}, ${sensores.longitud.toFixed(6)}` : 'Buscando satélites...'}
+            </span>
+            <span className="text-[10px] text-zinc-400 mt-1 block">
+              📦 Paquetes transmitidos: <b className="text-cyan-400 font-mono">{paquetesEnviados}</b>
+            </span>
+          </div>
           <div className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-lg">
             <span className="text-[10px] text-zinc-500 block">Velocidad</span>
             <span className="font-mono text-cyan-400 text-sm font-bold">{sensores.velocidad} km/h</span>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { getApiUrl } from './config';
 
 const estiloMapa = {
   version: 8,
@@ -27,6 +28,11 @@ const estiloMapa = {
   ]
 };
 
+const obtenerFechaLocalISO = (d = new Date()) => {
+  const offset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+};
+
 export default function Historial({ auth, alVolver }) {
   const contenedorMapa = useRef(null);
   const referenciaMapa = useRef(null);
@@ -34,8 +40,8 @@ export default function Historial({ auth, alVolver }) {
 
   const [dispositivos, setDispositivos] = useState([]);
   const [seleccionado, setSeleccionado] = useState('');
-  const [inicio, setInicio] = useState(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16));
-  const [fin, setFin] = useState(new Date().toISOString().slice(0, 16));
+  const [inicio, setInicio] = useState(obtenerFechaLocalISO(new Date(Date.now() - 24 * 60 * 60 * 1000)));
+  const [fin, setFin] = useState(obtenerFechaLocalISO(new Date()));
   const [historial, setHistorial] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [indice, setIndice] = useState(0);
@@ -95,7 +101,7 @@ export default function Historial({ auth, alVolver }) {
 
       const fetchDispositivos = async () => {
         try {
-          const res = await fetch('/api/flota/dispositivos', {
+          const res = await fetch(getApiUrl('/api/flota/dispositivos'), {
             headers: { 'Authorization': `Bearer ${auth.token}` }
           });
           const data = await res.json();
@@ -117,7 +123,7 @@ export default function Historial({ auth, alVolver }) {
     try {
       const isostart = new Date(inicio).toISOString();
       const isoend = new Date(fin).toISOString();
-      const res = await fetch(`/api/flota/historial?dispositivo_id=${seleccionado}&inicio=${isostart}&fin=${isoend}`, {
+      const res = await fetch(getApiUrl(`/api/flota/historial?dispositivo_id=${seleccionado}&inicio=${isostart}&fin=${isoend}`), {
         headers: { 'Authorization': `Bearer ${auth.token}` }
       });
       const data = await res.json();

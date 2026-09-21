@@ -1,0 +1,68 @@
+# ==========================================
+# TRACE-MIN - .gitignore
+# ==========================================
+
+# Prompts, Contexto, Auditorías e Informes IA
+PROMPT_*.md
+SKILL_*.md
+CONTEXT.md
+informe_*.md
+auditoria_*.md
+reporte_*.md
+walkthrough*.md
+implementation_plan*.md
+manual.md
+*.prompt
+*.ai
+
+# Dependencias Node.js
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Compilación y Builds Frontend / Backend
+dist/
+**/dist/
+build/
+**/build/
+out/
+.cache/
+
+# Android / Gradle / Capacitor Builds y Binarios
+*.apk
+*.aab
+*.keystore
+*.jks
+.gradle/
+**/build/
+**/app/build/
+**/capacitor-android/build/
+**/capacitor-cordova-android-plugins/build/
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/capacitor-cordova-android-plugins/build/
+frontend/android/local.properties
+frontend/android/.idea/
+frontend/android/*.iml
+frontend/android/app/*.iml
+
+# Variables de entorno y credenciales
+.env
+.env.*
+!.env.example
+
+# Logs y bases de datos locales
+*.log
+docker_data/
+db_data/
+
+# IDEs y Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

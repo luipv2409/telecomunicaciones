@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { getApiUrl } from './config';
 
 const estiloMapa = {
   version: 8,
@@ -30,7 +31,7 @@ export default function Geocercas({ auth, alVolver }) {
 
   const cargarGeocercas = async () => {
     try {
-      const res = await fetch('/api/geocercas', { headers: { 'Authorization': `Bearer ${auth.token}` }});
+      const res = await fetch(getApiUrl('/api/geocercas'), { headers: { 'Authorization': `Bearer ${auth.token}` }});
       const data = await res.json();
       setGeocercas(data);
       if (referenciaMapa.current) dibujarGeocercasGuardadas(data);
@@ -166,7 +167,7 @@ export default function Geocercas({ auth, alVolver }) {
     };
 
     try {
-      const res = await fetch('/api/geocercas', {
+      const res = await fetch(getApiUrl('/api/geocercas'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

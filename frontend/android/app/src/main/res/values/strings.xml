@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TRACE-MIN</string>
+    <string name="title_activity_main">TRACE-MIN</string>
+    <string name="package_name">com.tracemin.telemetria</string>
+    <string name="custom_url_scheme">com.tracemin.telemetria</string>
+</resources>

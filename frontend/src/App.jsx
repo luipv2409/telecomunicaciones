@@ -5,21 +5,30 @@ import Simulador from './Simulador';
 import Dashboard from './Dashboard';
 import Historial from './Historial';
 import Geocercas from './Geocercas';
+import ConfigModal from './ConfigModal';
+import { getApiUrl, getWsUrl, getConfig } from './config';
 
-function Login({ onLogin, alVolver }) {
+function Login({ onLogin, alVolver, alAbrirConfig }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch(getApiUrl('/api/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch (jsonErr) {
+        throw new Error('Respuesta inválida del servidor. Abre "⚙️ Servidor" y revisa la IP y Puerto configurados.');
+      }
       
       if (!res.ok) throw new Error(data.error || 'Error al iniciar sesión');
       
@@ -30,12 +39,20 @@ function Login({ onLogin, alVolver }) {
   };
 
   return (
-    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4">
+    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 relative">
       <button 
         onClick={alVolver} 
-        className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg z-10 border border-zinc-700"
+        className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg z-10 border border-zinc-700 text-sm"
       >
         ← Volver
+      </button>
+
+      <button
+        onClick={alAbrirConfig}
+        className="absolute top-4 right-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white px-3 py-2 rounded-lg z-10 border border-zinc-700 text-xs flex items-center gap-1.5"
+        title="Configurar IP / Puerto del Servidor"
+      >
+        <span>⚙️</span> Servidor
       </button>
       
       <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-sm w-full">
@@ -107,10 +124,16 @@ function MapaView({ auth, alVolver }) {
   const vehiculosRef = useRef({}); 
   const [vehiculosUI, setVehiculosUI] = useState({}); 
   const [filtrosVisibles, setFiltrosVisibles] = useState({});
+  const [alertasEnVivo, setAlertasEnVivo] = useState([]);
+
+  const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const montadoRef = useRef(true);
 
   const colores = ['#06b6d4', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444'];
 
   useEffect(() => {
+    montadoRef.current = true;
     if (!contenedorMapa.current) return;
 
     const mapa = new maplibregl.Map({
@@ -138,6 +161,11 @@ function MapaView({ auth, alVolver }) {
     }, 4000);
 
     return () => {
+      montadoRef.current = false;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch(e) {}
+      }
       clearInterval(intervaloChequeo);
       window.removeEventListener('resize', manejarResize);
       mapa.remove();
@@ -403,7 +431,7 @@ function MapaView({ auth, alVolver }) {
 
   const cargarHistorialDeHoy = async () => {
     try {
-      const res = await fetch('/api/flota/hoy', {
+      const res = await fetch(getApiUrl('/api/flota/hoy'), {
         headers: { 'Authorization': `Bearer ${auth.token}` }
       });
       const datosHistorial = await res.json();
@@ -423,16 +451,57 @@ function MapaView({ auth, alVolver }) {
   };
 
   const iniciarConexionServidor = () => {
-    const protocolo = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const conexionWebsocket = new WebSocket(`${protocolo}//${window.location.host}/ws`);
-    
-    conexionWebsocket.onmessage = (evento) => {
-      const datos = JSON.parse(evento.data);
-      if (datos.dispositivo_id && datos.lo && datos.la) {
-        registrarOActualizarVehiculo(datos);
-        setVehiculosUI({ ...vehiculosRef.current });
+    if (!montadoRef.current) return;
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch(e) {}
+    }
+
+    try {
+      const urlWs = getWsUrl('/ws');
+      const conexionWebsocket = new WebSocket(urlWs);
+      wsRef.current = conexionWebsocket;
+      
+      conexionWebsocket.onmessage = (evento) => {
+        try {
+          const datos = JSON.parse(evento.data);
+
+          if (datos.alerta) {
+            const nuevaAlerta = {
+              id: Date.now() + Math.random(),
+              ...datos
+            };
+            setAlertasEnVivo(prev => [nuevaAlerta, ...prev.slice(0, 3)]);
+            setTimeout(() => {
+              setAlertasEnVivo(prev => prev.filter(a => a.id !== nuevaAlerta.id));
+            }, 6000);
+            return;
+          }
+
+          if (datos.dispositivo_id && datos.lo !== undefined && datos.la !== undefined) {
+            registrarOActualizarVehiculo(datos);
+            setVehiculosUI({ ...vehiculosRef.current });
+          }
+        } catch (err) {}
+      };
+
+      conexionWebsocket.onclose = () => {
+        if (montadoRef.current) {
+          reconnectTimerRef.current = setTimeout(() => {
+            if (montadoRef.current) iniciarConexionServidor();
+          }, 3500);
+        }
+      };
+
+      conexionWebsocket.onerror = (e) => {
+        console.warn('WebSocket error, se reintentará conexión:', e);
+      };
+    } catch (err) {
+      if (montadoRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          if (montadoRef.current) iniciarConexionServidor();
+        }, 4000);
       }
-    };
+    }
   };
 
   const centrarEnVehiculo = (id) => {
@@ -453,6 +522,26 @@ function MapaView({ auth, alVolver }) {
         className="absolute inset-0 w-full h-full" 
         style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 0 }} 
       />
+
+      {alertasEnVivo.length > 0 && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 max-w-md w-full px-4 pointer-events-none">
+          {alertasEnVivo.map(alerta => (
+            <div 
+              key={alerta.id}
+              className="bg-red-950/95 border-2 border-red-500 text-white p-3 rounded-xl shadow-2xl backdrop-blur-md flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 pointer-events-auto"
+            >
+              <div className="text-2xl animate-bounce">⚠️</div>
+              <div className="flex-1 text-xs">
+                <div className="font-bold text-red-400 uppercase tracking-wide flex justify-between">
+                  <span>{alerta.tipo === 'geocerca' ? 'Alerta Geocerca' : 'Exceso de Velocidad'}</span>
+                  <span className="font-mono text-zinc-400 text-[10px]">{alerta.dispositivo_id}</span>
+                </div>
+                <div className="text-white mt-0.5">{alerta.mensaje}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       
       <button 
         onClick={alVolver} 
@@ -552,10 +641,29 @@ function MapaView({ auth, alVolver }) {
 export default function App() {
   const [modo, setModo] = useState('menu');
   const [auth, setAuth] = useState(null);
+  const [modalConfigAbierto, setModalConfigAbierto] = useState(false);
+  const [configActual, setConfigActual] = useState(getConfig());
+
+  const handleConfigGuardada = (nuevaCfg) => {
+    setConfigActual(nuevaCfg);
+  };
 
   if (modo === 'mapa') {
     if (!auth) {
-      return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+      return (
+        <>
+          <Login 
+            onLogin={setAuth} 
+            alVolver={() => setModo('menu')} 
+            alAbrirConfig={() => setModalConfigAbierto(true)} 
+          />
+          <ConfigModal 
+            abierto={modalConfigAbierto} 
+            alCerrar={() => setModalConfigAbierto(false)} 
+            alGuardar={handleConfigGuardada} 
+          />
+        </>
+      );
     }
     return <MapaView auth={auth} alVolver={() => { setModo('menu'); }} />;
   }
@@ -569,33 +677,103 @@ export default function App() {
         >
           ← Volver
         </button>
+        <button
+          onClick={() => setModalConfigAbierto(true)}
+          className="absolute top-4 right-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white px-3 py-2 rounded-lg shadow-lg z-10 transition-colors border border-zinc-700 text-xs flex items-center gap-1.5"
+          title="Configurar IP / Puerto"
+        >
+          <span>⚙️</span> Servidor
+        </button>
         <Simulador />
+        <ConfigModal 
+          abierto={modalConfigAbierto} 
+          alCerrar={() => setModalConfigAbierto(false)} 
+          alGuardar={handleConfigGuardada} 
+        />
       </div>
     );
   }
 
   if (modo === 'dashboard') {
-    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    if (!auth) return (
+      <>
+        <Login 
+          onLogin={setAuth} 
+          alVolver={() => setModo('menu')} 
+          alAbrirConfig={() => setModalConfigAbierto(true)} 
+        />
+        <ConfigModal 
+          abierto={modalConfigAbierto} 
+          alCerrar={() => setModalConfigAbierto(false)} 
+          alGuardar={handleConfigGuardada} 
+        />
+      </>
+    );
     return <Dashboard auth={auth} alVolver={() => { setModo('menu'); }} />;
   }
 
   if (modo === 'historial') {
-    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    if (!auth) return (
+      <>
+        <Login 
+          onLogin={setAuth} 
+          alVolver={() => setModo('menu')} 
+          alAbrirConfig={() => setModalConfigAbierto(true)} 
+        />
+        <ConfigModal 
+          abierto={modalConfigAbierto} 
+          alCerrar={() => setModalConfigAbierto(false)} 
+          alGuardar={handleConfigGuardada} 
+        />
+      </>
+    );
     return <Historial auth={auth} alVolver={() => { setModo('menu'); }} />;
   }
 
   if (modo === 'geocercas') {
-    if (!auth) return <Login onLogin={setAuth} alVolver={() => setModo('menu')} />;
+    if (!auth) return (
+      <>
+        <Login 
+          onLogin={setAuth} 
+          alVolver={() => setModo('menu')} 
+          alAbrirConfig={() => setModalConfigAbierto(true)} 
+        />
+        <ConfigModal 
+          abierto={modalConfigAbierto} 
+          alCerrar={() => setModalConfigAbierto(false)} 
+          alGuardar={handleConfigGuardada} 
+        />
+      </>
+    );
     return <Geocercas auth={auth} alVolver={() => { setModo('menu'); }} />;
   }
 
-  return (
-    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 font-sans">
-      <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-md w-full text-center">
-        <h1 className="text-4xl font-bold text-red-500 mb-2 tracking-tight">TRACE-MIN</h1>
-        <p className="text-zinc-400 mb-10 text-sm">Sistema de Telemetría Vehicular & Sensor Hub</p>
+  const hostDisplay = configActual.customEnabled 
+    ? `${configActual.protocol}://${configActual.host}:${configActual.port || '3000'}`
+    : 'Local / Mismo Servidor';
 
-        <div className="flex flex-col gap-4">
+  return (
+    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 font-sans relative">
+      <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-md w-full text-center relative">
+        
+        <button
+          onClick={() => setModalConfigAbierto(true)}
+          className="absolute top-4 right-4 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white px-2.5 py-1.5 rounded-lg border border-zinc-700 text-xs flex items-center gap-1.5 transition-colors"
+          title="Configurar IP y Puerto de conexión"
+        >
+          <span>⚙️</span>
+          <span className="font-mono text-[11px]">Servidor</span>
+        </button>
+
+        <h1 className="text-4xl font-bold text-red-500 mb-2 tracking-tight">TRACE-MIN</h1>
+        <p className="text-zinc-400 mb-2 text-sm">Sistema de Telemetría Vehicular & Sensor Hub</p>
+
+        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 mb-6">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span className="truncate max-w-[200px]" title={hostDisplay}>Host: {hostDisplay}</span>
+        </div>
+
+        <div className="flex flex-col gap-3">
           <button 
             onClick={() => setModo('mapa')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
@@ -630,7 +808,7 @@ export default function App() {
 
           <button 
             onClick={() => setModo('simulador')}
-            className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 mt-4"
+            className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 mt-2"
           >
             <span className="text-xl">📱</span>
             Simular Sensores Móviles
@@ -646,6 +824,12 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <ConfigModal 
+        abierto={modalConfigAbierto} 
+        alCerrar={() => setModalConfigAbierto(false)} 
+        alGuardar={handleConfigGuardada} 
+      />
     </div>
   );
 }

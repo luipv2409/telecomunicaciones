@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from './config';
 
 export default function Dashboard({ auth, alVolver }) {
   const [kpis, setKpis] = useState([]);
@@ -7,7 +8,7 @@ export default function Dashboard({ auth, alVolver }) {
   useEffect(() => {
     const fetchKpis = async () => {
       try {
-        const res = await fetch('/api/flota/kpis', {
+        const res = await fetch(getApiUrl('/api/flota/kpis'), {
           headers: { 'Authorization': `Bearer ${auth.token}` }
         });
         const data = await res.json();
