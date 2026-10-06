@@ -56,7 +56,7 @@ export default function ConfigModal({ abierto, alCerrar, alGuardar }) {
     if (tipo === 'local') {
       setProtocol('http');
       setHost('127.0.0.1');
-      setPort('3000');
+      setPort('3001');
     } else if (tipo === 'tailscale') {
       setProtocol('http');
       setHost('100.96.196.41');

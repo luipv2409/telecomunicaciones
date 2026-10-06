@@ -3,6 +3,7 @@ import fastifyCors from '@fastify/cors';
 import websocketPlugin from '@fastify/websocket';
 import fastifyJwt from '@fastify/jwt';
 import { rutasHistorico } from './routes';
+import { rutasPuente } from './puente';
 import { configurarWebSockets } from './websocket';
 
 const iniciarServidor = async () => {
@@ -17,6 +18,7 @@ const iniciarServidor = async () => {
     secret: 'super-secreto-teleco-123'
   });
   await fastify.register(rutasHistorico);
+  await fastify.register(rutasPuente);
 
   configurarWebSockets(fastify);
 

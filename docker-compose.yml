@@ -22,6 +22,7 @@ services:
       DB_USER: admin
       DB_PASSWORD: password
       DB_NAME: telemetria
+      HOST_IPS: ${HOST_IPS:-}
     ports:
       - "3001:3000"
     depends_on:

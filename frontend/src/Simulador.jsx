@@ -2,12 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import { getApiUrl } from './config';
+import ConfigEsp32 from './ConfigEsp32';
 
 export default function Simulador() {
   const [conectado, setConectado] = useState(false);
   const [error, setError] = useState(null);
   const [estado, setEstado] = useState('Inactivo');
   const [dispositivoId, setDispositivoId] = useState(`camion-${Math.floor(Math.random() * 1000)}`);
+  const [modoPuente, setModoPuente] = useState(() => localStorage.getItem('TRACEMIN_MODO_PUENTE') === '1');
+  const [puenteId, setPuenteId] = useState(() => localStorage.getItem('TRACEMIN_PUENTE_ID') || 'celular-1');
   
   const [sensores, setSensores] = useState({
     latitud: null,
@@ -36,6 +39,18 @@ export default function Simulador() {
   const sensoresRef = useRef(sensores);
   const intervaloEnvioRef = useRef(null);
   const ultimoEnvioMsRef = useRef(0);
+  const modoPuenteRef = useRef(modoPuente);
+  const puenteIdRef = useRef(puenteId);
+
+  useEffect(() => {
+    modoPuenteRef.current = modoPuente;
+    localStorage.setItem('TRACEMIN_MODO_PUENTE', modoPuente ? '1' : '0');
+  }, [modoPuente]);
+
+  useEffect(() => {
+    puenteIdRef.current = puenteId;
+    localStorage.setItem('TRACEMIN_PUENTE_ID', puenteId);
+  }, [puenteId]);
 
   useEffect(() => {
     sensoresRef.current = sensores;
@@ -240,10 +255,14 @@ export default function Simulador() {
       temperatura: s.temperatura
     };
 
-    fetch(getApiUrl('/api/telemetria'), {
+    const esPuente = modoPuenteRef.current;
+    const cuerpo = esPuente ? { ...payload, puente_id: puenteIdRef.current.trim() } : payload;
+    const ruta = esPuente ? '/api/puente/gps' : '/api/telemetria';
+
+    fetch(getApiUrl(ruta), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(cuerpo)
     }).then(res => {
       if (res.ok) setPaquetesEnviados(p => p + 1);
     }).catch(err => console.error('Error al enviar:', err));
@@ -267,8 +286,8 @@ export default function Simulador() {
   };
 
   return (
-    <div className="w-full min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-4">
-      <div className="bg-zinc-900 p-6 sm:p-8 rounded-2xl shadow-2xl border border-zinc-800 max-w-lg w-full text-center my-8">
+    <div className="w-full min-h-screen bg-zinc-950 text-white flex flex-col items-center p-3 sm:p-6 pt-20 pb-36 overflow-y-auto">
+      <div className="bg-zinc-900 p-5 sm:p-8 rounded-2xl shadow-2xl border border-zinc-800 max-w-lg w-full text-center my-2">
         <h1 className="text-3xl font-bold text-red-500 mb-1">Telemetría Sensor Hub</h1>
         <p className="text-zinc-400 mb-6 text-xs sm:text-sm">Captura y transmisión de sensores móviles en tiempo real</p>
 
@@ -285,6 +304,35 @@ export default function Simulador() {
             placeholder="Ej. camion-123"
           />
         </div>
+
+        <div className="mb-4 text-left bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+            <input
+              type="checkbox"
+              checked={modoPuente}
+              disabled={conectado}
+              onChange={(e) => setModoPuente(e.target.checked)}
+            />
+            Modo puente ESP32 (el celular solo aporta el GPS)
+          </label>
+          {modoPuente && (
+            <div className="mt-2">
+              <label className="block text-[11px] text-zinc-500 mb-1">ID del puente (debe coincidir con el del ESP32)</label>
+              <input
+                type="text"
+                value={puenteId}
+                onChange={(e) => setPuenteId(e.target.value)}
+                disabled={conectado}
+                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-red-500 disabled:opacity-50"
+              />
+              <p className="text-[10px] text-zinc-500 mt-1">
+                En este modo el vehículo aparece en el mapa con los datos que reenvía el ESP32.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <ConfigEsp32 puenteId={puenteId} dispositivoId={dispositivoId} />
 
         <div className="mb-6 flex items-center justify-between bg-zinc-950 p-3 rounded-lg border border-zinc-800">
           <span className="text-xs text-zinc-400">Estado</span>

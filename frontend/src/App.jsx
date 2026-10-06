@@ -157,8 +157,9 @@ function MapaView({ auth, alVolver }) {
     window.addEventListener('resize', manejarResize);
 
     const intervaloChequeo = setInterval(() => {
+      cargarHistorialDeHoy();
       setVehiculosUI({ ...vehiculosRef.current });
-    }, 4000);
+    }, 2500);
 
     return () => {
       montadoRef.current = false;
@@ -266,39 +267,49 @@ function MapaView({ auth, alVolver }) {
       ];
 
       if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
-        referenciaMapa.current.addSource(sourceId, {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: featuresIniciales }
-        });
-
-        referenciaMapa.current.addLayer({
-          id: `capa-linea-${dispositivo_id}`,
-          type: 'line',
-          source: sourceId,
-          filter: ['==', '$type', 'LineString'],
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 
-            'line-color': color, 
-            'line-width': 3, 
-            'line-dasharray': [3, 2],
-            'line-opacity': 0.65 
+        try {
+          if (!referenciaMapa.current.getSource(sourceId)) {
+            referenciaMapa.current.addSource(sourceId, {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: featuresIniciales }
+            });
           }
-        });
 
-        const capaPuntosId = `capa-puntos-${dispositivo_id}`;
-        referenciaMapa.current.addLayer({
-          id: capaPuntosId,
-          type: 'circle',
-          source: sourceId,
-          filter: ['==', '$type', 'Point'],
-          paint: {
-            'circle-radius': 4.5,
-            'circle-color': color,
-            'circle-opacity': 0.75,
-            'circle-stroke-width': 1.5,
-            'circle-stroke-color': '#ffffff'
+          if (!referenciaMapa.current.getLayer(`capa-linea-${dispositivo_id}`)) {
+            referenciaMapa.current.addLayer({
+              id: `capa-linea-${dispositivo_id}`,
+              type: 'line',
+              source: sourceId,
+              filter: ['==', '$type', 'LineString'],
+              layout: { 'line-join': 'round', 'line-cap': 'round' },
+              paint: { 
+                'line-color': color, 
+                'line-width': 3, 
+                'line-dasharray': [3, 2],
+                'line-opacity': 0.65 
+              }
+            });
           }
-        });
+
+          const capaPuntosId = `capa-puntos-${dispositivo_id}`;
+          if (!referenciaMapa.current.getLayer(capaPuntosId)) {
+            referenciaMapa.current.addLayer({
+              id: capaPuntosId,
+              type: 'circle',
+              source: sourceId,
+              filter: ['==', '$type', 'Point'],
+              paint: {
+                'circle-radius': 4.5,
+                'circle-color': color,
+                'circle-opacity': 0.75,
+                'circle-stroke-width': 1.5,
+                'circle-stroke-color': '#ffffff'
+              }
+            });
+          }
+        } catch (mapErr) {
+          console.warn('Error gestionando capa en mapa:', mapErr);
+        }
 
         referenciaMapa.current.on('click', capaPuntosId, (e) => {
           const props = e.features[0].properties;
@@ -639,10 +650,45 @@ function MapaView({ auth, alVolver }) {
 }
 
 export default function App() {
-  const [modo, setModo] = useState('menu');
-  const [auth, setAuth] = useState(null);
+  const [auth, setAuth] = useState(() => {
+    try {
+      const guardado = localStorage.getItem('TRACEMIN_AUTH');
+      return guardado ? JSON.parse(guardado) : null;
+    } catch(e) { return null; }
+  });
+
+  const [modo, setModo] = useState(() => {
+    try {
+      const guardado = localStorage.getItem('TRACEMIN_MODO');
+      return guardado || 'menu';
+    } catch(e) { return 'menu'; }
+  });
+
   const [modalConfigAbierto, setModalConfigAbierto] = useState(false);
   const [configActual, setConfigActual] = useState(getConfig());
+
+  const cambiarModo = (nuevoModo) => {
+    setModo(nuevoModo);
+    try {
+      localStorage.setItem('TRACEMIN_MODO', nuevoModo);
+    } catch(e) {}
+  };
+
+  const handleLogin = (datosAuth) => {
+    setAuth(datosAuth);
+    try {
+      localStorage.setItem('TRACEMIN_AUTH', JSON.stringify(datosAuth));
+    } catch(e) {}
+  };
+
+  const handleLogout = () => {
+    setAuth(null);
+    try {
+      localStorage.removeItem('TRACEMIN_AUTH');
+      localStorage.setItem('TRACEMIN_MODO', 'menu');
+    } catch(e) {}
+    setModo('menu');
+  };
 
   const handleConfigGuardada = (nuevaCfg) => {
     setConfigActual(nuevaCfg);
@@ -653,8 +699,8 @@ export default function App() {
       return (
         <>
           <Login 
-            onLogin={setAuth} 
-            alVolver={() => setModo('menu')} 
+            onLogin={handleLogin} 
+            alVolver={() => cambiarModo('menu')} 
             alAbrirConfig={() => setModalConfigAbierto(true)} 
           />
           <ConfigModal 
@@ -665,21 +711,21 @@ export default function App() {
         </>
       );
     }
-    return <MapaView auth={auth} alVolver={() => { setModo('menu'); }} />;
+    return <MapaView auth={auth} alVolver={() => cambiarModo('menu')} />;
   }
 
   if (modo === 'simulador') {
     return (
-      <div className="relative">
+      <div className="relative w-full h-screen overflow-y-auto bg-zinc-950">
         <button 
-          onClick={() => setModo('menu')} 
-          className="absolute top-4 left-4 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg shadow-lg z-10 transition-colors border border-zinc-700 text-sm"
+          onClick={() => cambiarModo('menu')} 
+          className="fixed top-4 left-4 bg-zinc-900/90 backdrop-blur hover:bg-zinc-800 text-white px-4 py-2 rounded-lg shadow-xl z-30 transition-colors border border-zinc-700 text-sm"
         >
           ← Volver
         </button>
         <button
           onClick={() => setModalConfigAbierto(true)}
-          className="absolute top-4 right-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white px-3 py-2 rounded-lg shadow-lg z-10 transition-colors border border-zinc-700 text-xs flex items-center gap-1.5"
+          className="fixed top-4 right-4 bg-zinc-900/90 backdrop-blur hover:bg-zinc-800 text-zinc-300 hover:text-white px-3 py-2 rounded-lg shadow-xl z-30 transition-colors border border-zinc-700 text-xs flex items-center gap-1.5"
           title="Configurar IP / Puerto"
         >
           <span>⚙️</span> Servidor
@@ -698,8 +744,8 @@ export default function App() {
     if (!auth) return (
       <>
         <Login 
-          onLogin={setAuth} 
-          alVolver={() => setModo('menu')} 
+          onLogin={handleLogin} 
+          alVolver={() => cambiarModo('menu')} 
           alAbrirConfig={() => setModalConfigAbierto(true)} 
         />
         <ConfigModal 
@@ -709,15 +755,15 @@ export default function App() {
         />
       </>
     );
-    return <Dashboard auth={auth} alVolver={() => { setModo('menu'); }} />;
+    return <Dashboard auth={auth} alVolver={() => cambiarModo('menu')} />;
   }
 
   if (modo === 'historial') {
     if (!auth) return (
       <>
         <Login 
-          onLogin={setAuth} 
-          alVolver={() => setModo('menu')} 
+          onLogin={handleLogin} 
+          alVolver={() => cambiarModo('menu')} 
           alAbrirConfig={() => setModalConfigAbierto(true)} 
         />
         <ConfigModal 
@@ -727,15 +773,15 @@ export default function App() {
         />
       </>
     );
-    return <Historial auth={auth} alVolver={() => { setModo('menu'); }} />;
+    return <Historial auth={auth} alVolver={() => cambiarModo('menu')} />;
   }
 
   if (modo === 'geocercas') {
     if (!auth) return (
       <>
         <Login 
-          onLogin={setAuth} 
-          alVolver={() => setModo('menu')} 
+          onLogin={handleLogin} 
+          alVolver={() => cambiarModo('menu')} 
           alAbrirConfig={() => setModalConfigAbierto(true)} 
         />
         <ConfigModal 
@@ -745,7 +791,7 @@ export default function App() {
         />
       </>
     );
-    return <Geocercas auth={auth} alVolver={() => { setModo('menu'); }} />;
+    return <Geocercas auth={auth} alVolver={() => cambiarModo('menu')} />;
   }
 
   const hostDisplay = configActual.customEnabled 
@@ -775,7 +821,7 @@ export default function App() {
 
         <div className="flex flex-col gap-3">
           <button 
-            onClick={() => setModo('mapa')}
+            onClick={() => cambiarModo('mapa')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-xl">🗺️</span>
@@ -783,7 +829,7 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => setModo('dashboard')}
+            onClick={() => cambiarModo('dashboard')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-xl">📊</span>
@@ -791,7 +837,7 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => setModo('historial')}
+            onClick={() => cambiarModo('historial')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-xl">⏪</span>
@@ -799,7 +845,7 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => setModo('geocercas')}
+            onClick={() => cambiarModo('geocercas')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
           >
             <span className="text-xl">📍</span>
@@ -807,7 +853,7 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => setModo('simulador')}
+            onClick={() => cambiarModo('simulador')}
             className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 mt-2"
           >
             <span className="text-xl">📱</span>
@@ -816,7 +862,7 @@ export default function App() {
           
           {auth && (
             <button 
-              onClick={() => setAuth(null)}
+              onClick={handleLogout}
               className="w-full mt-2 text-zinc-500 hover:text-zinc-300 text-sm underline pb-2"
             >
               Cerrar Sesión ({auth.username})
