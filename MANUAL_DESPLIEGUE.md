@@ -2,6 +2,12 @@
 
 Guía completa para poner en funcionamiento el sistema de telemetría y seguimiento satelital **TRACE-MIN** en cualquier máquina (servidor local, PC de desarrollo o entorno de producción).
 
+> [!NOTE]
+> **Aviso para Desarrolladores y Agentes de IA:**  
+> Este manual describe el despliegue específico del sistema **TRACE-MIN**.  
+> Si tu objetivo es **integrar otro sistema derivado (Sistema 4 o N-ésimo) compartiendo la misma URL fija permanente de Internet (`https://chummy-conductor-wilt.ngrok-free.dev`)**, utiliza la guía de arquitectura maestra:  
+> 📄 [MANUAL_EXPONER_SISTEMAS_INTERNET.md](file:///c:/xampp/htdocs/teleco/MANUAL_EXPONER_SISTEMAS_INTERNET.md).
+
 ---
 
 ## 📋 Arquitectura del Sistema
@@ -77,6 +83,7 @@ Deberás ver los 3 contenedores con estado `Up` y sus puertos asignados.
 Abre tu navegador web favorito e ingresa a:
 
 * **En la misma PC:** [http://localhost:8080](http://localhost:8080)
+* **Vía Internet (Pública Permanente con SSL):** [https://chummy-conductor-wilt.ngrok-free.dev/teleco/](https://chummy-conductor-wilt.ngrok-free.dev/teleco/)
 * **Desde otra PC en la misma red local:** `http://<IP_LOCAL_DE_LA_PC>:8080`
 * **Vía Tailscale (cualquier lugar del mundo):** `http://<IP_TAILSCALE>:8080`
 
@@ -91,20 +98,18 @@ Abre tu navegador web favorito e ingresa a:
 
 ## 📱 PASO 4: Conectar la APK de Android (Celular)
 
-### 1. Obtener la IP de la máquina Servidor:
-* **Si usas Red Wi-Fi Local:** Abre la terminal en la PC del servidor y ejecuta `ipconfig` (Windows) o `ifconfig` (Linux/Mac) y copia la dirección IPv4 (ej. `192.168.1.50`).
-* **Si usas Tailscale:** Abre Tailscale en la PC y copia la IP asignada (ej. `100.96.196.41`).
-
-### 2. Configurar la APK en el Celular:
+### Opción A: Conexión Automática por Internet (Recomendada)
 1. Instala la APK en tu teléfono.
 2. Abre la app **TRACE-MIN**.
 3. En la esquina superior derecha, toca el botón **⚙️ Servidor**.
-4. Configura los parámetros:
-   * **Protocolo:** `HTTP (Red Local / Tailscale)`
-   * **Dirección IP o Host:** La IP de tu servidor (ej. `100.96.196.41` o `192.168.1.50`).
-   * **Puerto:** `3001` *(o `8080`)*.
+4. Toca el botón de acceso rápido **🚀 Internet (Ngrok)** (configura automáticamente `https`, `chummy-conductor-wilt.ngrok-free.dev/teleco`).
 5. Toca **📡 Probar Conexión**. Debe responder: **`✅ Conexión exitosa con el servidor TRACE-MIN`**.
 6. Toca **Guardar y Aplicar**.
+
+### Opción B: Conexión Local o Tailscale
+1. Abre **⚙️ Servidor** en la APK.
+2. Toca **🌐 Tailscale** o **💻 Local** (o escribe la IP de la máquina).
+3. Toca **Guardar y Aplicar**.
 
 ---
 
@@ -153,8 +158,8 @@ La APK recién generada se ubicará en:
 ### 1. Error de puerto ocupado (Port already allocated)
 Si al ejecutar `docker compose up` recibes un error indicando que el puerto `3001`, `8080` o `5432` ya está en uso por otro programa:
 * Edita el archivo `docker-compose.yml`.
-* Cambia el puerto izquierdo del servicio conflictivo (ejemplo: cambiar `"3001:3000"` por `"3005:3000"`).
-* Ajusta el puerto en el modal de configuración de la APK.
+* Cambia el puerto izquierdo del servicio conflictivo por un puerto libre verificado (ejemplo: `8090`, `9000`).
+* **Consulta siempre la lista de puertos ocupados en el host** en [MANUAL_EXPONER_SISTEMAS_INTERNET.md](file:///c:/xampp/htdocs/teleco/MANUAL_EXPONER_SISTEMAS_INTERNET.md) para no colisionar con XAMPP, Jellyfin u otros contenedores.
 
 ### 2. La APK dice "Tiempo de espera agotado (Timeout 6s)"
 * Verifica que el celular y la PC estén en la misma red Wi-Fi o ambos tengan **Tailscale activo y conectado**.
@@ -178,3 +183,15 @@ docker compose up -d --build
 # Ver logs en vivo del backend
 docker compose logs -f backend
 ```
+
+---
+
+## 🌐 Integración Multi-Sistema con la URL Maestra de Internet
+
+TRACE-MIN opera como **Sistema 3** compartiendo la URL fija pública permanente con los demás sistemas de la máquina:
+* Web: [https://chummy-conductor-wilt.ngrok-free.dev/teleco/](https://chummy-conductor-wilt.ngrok-free.dev/teleco/)
+* API: `https://chummy-conductor-wilt.ngrok-free.dev/teleco/api/`
+* WebSocket: `wss://chummy-conductor-wilt.ngrok-free.dev/teleco/ws`
+
+Para desplegar un **Cuarto (o N-ésimo) sistema** en esta misma máquina utilizando esta misma URL, entrega a tu agente de IA el manual de arquitectura:  
+👉 [MANUAL_EXPONER_SISTEMAS_INTERNET.md](file:///c:/xampp/htdocs/teleco/MANUAL_EXPONER_SISTEMAS_INTERNET.md).

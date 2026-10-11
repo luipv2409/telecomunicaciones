@@ -65,6 +65,10 @@ export default function ConfigModal({ abierto, alCerrar, alGuardar }) {
       setProtocol('http');
       setHost('127.0.0.1');
       setPort('8080');
+    } else if (tipo === 'internet') {
+      setProtocol('https');
+      setHost('chummy-conductor-wilt.ngrok-free.dev/teleco');
+      setPort('');
     }
     setResultadoPrueba(null);
   };
@@ -89,19 +93,19 @@ export default function ConfigModal({ abierto, alCerrar, alGuardar }) {
           </div>
           <div>
             <h2 className="text-xl font-bold text-white">Configuración del Servidor</h2>
-            <p className="text-xs text-zinc-400">Conexión para red local o Tailscale</p>
+            <p className="text-xs text-zinc-400">Conexión local, Tailscale o Internet (Ngrok)</p>
           </div>
         </div>
 
         <div className="mb-4">
           <label className="block text-xs font-semibold text-zinc-400 mb-1.5">Accesos Rápidos (Presets):</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => aplicarPreset('local')}
               className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs py-1.5 px-2 rounded-lg border border-zinc-700 transition-colors"
             >
-              💻 Local (3000)
+              💻 Local (3001)
             </button>
             <button
               type="button"
@@ -116,6 +120,13 @@ export default function ConfigModal({ abierto, alCerrar, alGuardar }) {
               className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs py-1.5 px-2 rounded-lg border border-zinc-700 transition-colors"
             >
               🐳 Docker (8080)
+            </button>
+            <button
+              type="button"
+              onClick={() => aplicarPreset('internet')}
+              className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-semibold text-xs py-1.5 px-2 rounded-lg border border-emerald-700/50 transition-colors"
+            >
+              🚀 Internet (Ngrok)
             </button>
           </div>
         </div>

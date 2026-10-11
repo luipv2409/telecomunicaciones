@@ -4,13 +4,23 @@ Este documento sirve como registro oficial sobre cómo conectar físicamente un 
 
 ## Arquitectura de Conexión
 
-1. **Hardware**: Un ESP32 conectado a internet (vía WiFi local o módulo GSM) + un módulo GPS (ej. NEO-6M) + un acelerómetro/giroscopio (ej. MPU6050).
-2. **Protocolo**: HTTP POST en formato JSON.
-3. **Endpoint**: `http://<IP_DEL_SERVIDOR>:3000/api/telemetria`
+1. **Hardware**: Un microcontrolador ESP32 o ESP32-S3 (Dual Core) conectado a internet (vía Wi-Fi local, hotspot celular o túnel permanente).
+2. **Protocolo**: HTTP / HTTPS POST en formato JSON con soporte SSL (`WiFiClientSecure` con `setInsecure()`).
+3. **Endpoints de Destino**:
+   * **Por Internet (Pública Permanente con SSL):** `https://chummy-conductor-wilt.ngrok-free.dev/teleco/api/telemetria`
+   * **Local / Tailscale:** `http://<IP_SERVIDOR>:3001/api/telemetria`
+   * **Vía Docker Web:** `http://<IP_SERVIDOR>:8080/api/telemetria`
+
+> [!IMPORTANT]
+> Al enviar peticiones a través de Ngrok, es obligatorio incluir el encabezado HTTP:  
+> `ngrok-skip-browser-warning: true`  
+> de lo contrario Ngrok devolverá la página de advertencia HTML en lugar de procesar el JSON en el backend.
+
+---
 
 ## Estructura del Payload (JSON)
 
-El sistema espera recibir los datos con las siguientes claves. No es obligatorio enviarlos todos, puedes empezar enviando solo las coordenadas y la velocidad.
+El sistema espera recibir los datos con las siguientes claves:
 
 ```json
 {
@@ -32,91 +42,37 @@ El sistema espera recibir los datos con las siguientes claves. No es obligatorio
 }
 ```
 
-## Código Base C++ (Arduino IDE)
+---
 
-A continuación, el código esqueleto para flashear en el ESP32. Este código se conecta al WiFi y envía datos simulados cada 5 segundos al servidor. 
+## 🚀 Sketch Oficial Resiliente para Arduino IDE
 
-Deberás reemplazar los datos simulados leyendo los sensores reales (vía Serial para el GPS y vía I2C para el MPU6050).
+El sketch completo, probado y listo para compilar se encuentra en:  
+📂 **[`firmware/esp32_tracemin/esp32_tracemin.ino`](file:///c:/xampp/htdocs/teleco/firmware/esp32_tracemin/esp32_tracemin.ino)**
 
-```cpp
-#include <WiFi.h>
-#include <HTTPClient.h>
+### Características Principales:
+* **Portal Cautivo DNS Automático:** Si no hay Wi-Fi o se mantiene presionado el botón BOOT por 3s, levanta la red `TRACEMIN-ESP32` (clave: `tracemin123`) y abre `http://192.168.4.1` automáticamente en el celular.
+* **Memoria Flash Permanente (NVS):** Almacena credenciales Wi-Fi, URL de servidor y parámetros con `Preferences.h`.
+* **Soporte HTTPS con `WiFiClientSecure`:** Se conecta sin problemas a dominios SSL de Ngrok o Cloudflare.
+* **Bypass de Pantalla Ngrok:** Incluye automáticamente `ngrok-skip-browser-warning: true`.
+* **Hardware Watchdog Timer (WDT):** 20 segundos de timeout para autorecuperación en caso de cuelgues.
+* **Reconexión con Backoff Exponencial:** Evita saturar la CPU si el router o túnel se desconectan temporalmente.
 
-// Configuración de tu red WiFi
-const char* ssid = "TU_RED_WIFI";
-const char* password = "TU_PASSWORD";
+### Cómo Subirlo con Arduino IDE:
+1. Abre **Arduino IDE 2.x**.
+2. Ve a **Archivo** > **Abrir...** y selecciona:
+   `c:\xampp\htdocs\teleco\firmware\esp32_tracemin\esp32_tracemin.ino`
+3. En **Herramientas** > **Placa**, selecciona **ESP32S3 Dev Module** (o **ESP32 Dev Module** según tu placa).
+4. En **Herramientas** > **Administrador de Bibliotecas**, asegúrate de tener instalada la librería **ArduinoJson** (v7.x).
+5. Conecta tu ESP32 por USB y selecciona el puerto COM correspondiente.
+6. Haz clic en **Subir (Upload)**.
+7. Abre el Monitor Serie a **115200 baudios**.
 
-// Dirección IP del servidor donde corre Trace-Min (El backend por el puerto 3000)
-// Ejemplo: "http://192.168.1.100:3000/api/telemetria"
-const String serverName = "http://192.168.X.X:3000/api/telemetria";
+---
 
-void setup() {
-  Serial.begin(115200);
-  
-  WiFi.begin(ssid, password);
-  Serial.println("Conectando al WiFi...");
-  
-  while(WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  
-  Serial.println("\nConectado a la red WiFi");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-}
+## 📱 Configuración Inicial desde el Teléfono
+1. Conecta tu teléfono celular a la red Wi-Fi abierta por el ESP32: **`TRACEMIN-ESP32`** (clave: `tracemin123`).
+2. Tu teléfono abrirá automáticamente la página de configuración (o abre `http://192.168.4.1`).
+3. Toca el botón rápido **🚀 Internet Ngrok** (configurará automáticamente el host a `chummy-conductor-wilt.ngrok-free.dev/teleco`).
+4. Selecciona tu red Wi-Fi e ingresa la contraseña.
+5. Toca **Guardar y Conectar**. El ESP32 se reiniciará y comenzará a transmitir hacia la nube de inmediato.
 
-void loop() {
-  if(WiFi.status() == WL_CONNECTED){
-    HTTPClient http;
-    
-    // Iniciar conexión al backend
-    http.begin(serverName);
-    http.addHeader("Content-Type", "application/json");
-    
-    // ---------------------------------------------------------
-    // AQUÍ DEBES LEER TUS SENSORES (TinyGPS++, Adafruit_MPU6050, etc)
-    // ---------------------------------------------------------
-    
-    // Payload JSON de ejemplo (simulando lectura de sensores)
-    String httpRequestData = "{"
-      "\"dispositivo_id\":\"ESP32-Real-01\","
-      "\"latitud\":-17.3935,"
-      "\"longitud\":-66.1570,"
-      "\"velocidad\":65.2,"
-      "\"rumbo\":90,"
-      "\"temperatura\":26.5,"
-      "\"bateria\":95"
-    "}";
-    
-    // Enviar el POST
-    int httpResponseCode = http.POST(httpRequestData);
-    
-    if (httpResponseCode > 0) {
-      Serial.print("Código HTTP de Respuesta: ");
-      Serial.println(httpResponseCode);
-      String payload = http.getString();
-      Serial.println(payload); // Debería imprimir {"estado":"ok"}
-    }
-    else {
-      Serial.print("Error en la petición: ");
-      Serial.println(httpResponseCode);
-    }
-    
-    // Liberar recursos
-    http.end();
-  }
-  else {
-    Serial.println("Desconectado de WiFi");
-  }
-  
-  // Enviar datos cada 5 segundos (Ajusta según tu necesidad de rastreo)
-  delay(5000);
-}
-```
-
-## Próximos pasos
-1. Descarga el **Arduino IDE**.
-2. Instala el gestor de tarjetas para el ESP32.
-3. Adapta el código usando librerías como `TinyGPS++` para el GPS (SoftwareSerial) y `Adafruit MPU6050` para el acelerómetro/giroscopio.
-4. Asegúrate de que el servidor (`192.168.x.x`) y el ESP32 estén conectados en la misma red LAN para que el POST llegue sin problemas.

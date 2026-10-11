@@ -102,7 +102,10 @@ export default function Historial({ auth, alVolver }) {
       const fetchDispositivos = async () => {
         try {
           const res = await fetch(getApiUrl('/api/flota/dispositivos'), {
-            headers: { 'Authorization': `Bearer ${auth.token}` }
+            headers: { 
+              'Authorization': `Bearer ${auth.token}`,
+              'ngrok-skip-browser-warning': 'true'
+            }
           });
           const data = await res.json();
           setDispositivos(data);
@@ -124,7 +127,10 @@ export default function Historial({ auth, alVolver }) {
       const isostart = new Date(inicio).toISOString();
       const isoend = new Date(fin).toISOString();
       const res = await fetch(getApiUrl(`/api/flota/historial?dispositivo_id=${seleccionado}&inicio=${isostart}&fin=${isoend}`), {
-        headers: { 'Authorization': `Bearer ${auth.token}` }
+        headers: { 
+          'Authorization': `Bearer ${auth.token}`,
+          'ngrok-skip-browser-warning': 'true'
+        }
       });
       const data = await res.json();
       setHistorial(data);

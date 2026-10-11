@@ -9,7 +9,10 @@ export default function Dashboard({ auth, alVolver }) {
     const fetchKpis = async () => {
       try {
         const res = await fetch(getApiUrl('/api/flota/kpis'), {
-          headers: { 'Authorization': `Bearer ${auth.token}` }
+          headers: { 
+            'Authorization': `Bearer ${auth.token}`,
+            'ngrok-skip-browser-warning': 'true'
+          }
         });
         const data = await res.json();
         setKpis(data);

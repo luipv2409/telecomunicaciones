@@ -6,7 +6,7 @@ import Dashboard from './Dashboard';
 import Historial from './Historial';
 import Geocercas from './Geocercas';
 import ConfigModal from './ConfigModal';
-import { getApiUrl, getWsUrl, getConfig } from './config';
+import { getApiUrl, getWsUrl, getConfig, getSubpath } from './config';
 
 function Login({ onLogin, alVolver, alAbrirConfig }) {
   const [username, setUsername] = useState('');
@@ -267,6 +267,7 @@ function MapaView({ auth, alVolver }) {
       ];
 
       if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
+        const capaPuntosId = `capa-puntos-${dispositivo_id}`;
         try {
           if (!referenciaMapa.current.getSource(sourceId)) {
             referenciaMapa.current.addSource(sourceId, {
@@ -291,7 +292,6 @@ function MapaView({ auth, alVolver }) {
             });
           }
 
-          const capaPuntosId = `capa-puntos-${dispositivo_id}`;
           if (!referenciaMapa.current.getLayer(capaPuntosId)) {
             referenciaMapa.current.addLayer({
               id: capaPuntosId,
@@ -307,39 +307,39 @@ function MapaView({ auth, alVolver }) {
               }
             });
           }
+
+          referenciaMapa.current.on('click', capaPuntosId, (e) => {
+            const props = e.features[0].properties;
+            const coord = e.features[0].geometry.coordinates.slice();
+            
+            new maplibregl.Popup()
+              .setLngLat(coord)
+              .setHTML(`
+                <div style="color: #18181b; padding: 6px; font-family: sans-serif; min-width: 170px;">
+                  <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 6px;">${props.dispositivo_id}</strong>
+                  <div style="font-size: 11px; line-height: 1.6;">
+                    <div>🕒 Hora: <b>${props.hora}</b></div>
+                    <div>🚀 Vel: <b>${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
+                    <div>⛰️ Alt: <b>${props.altitud} m</b></div>
+                    <div>🔥 Temp: <b>${props.temperatura} °C</b></div>
+                    <div>〰️ Vib: <b>${props.vibracion} G</b></div>
+                    <div>📐 Pitch/Roll: <b>${props.pitch}° / ${props.roll}°</b></div>
+                    <div>🔋 Bat: <b>${props.bateria}% (${props.voltaje}V)</b></div>
+                  </div>
+                </div>
+              `)
+              .addTo(referenciaMapa.current);
+          });
+
+          referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
+            referenciaMapa.current.getCanvas().style.cursor = 'pointer';
+          });
+          referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
+            referenciaMapa.current.getCanvas().style.cursor = '';
+          });
         } catch (mapErr) {
           console.warn('Error gestionando capa en mapa:', mapErr);
         }
-
-        referenciaMapa.current.on('click', capaPuntosId, (e) => {
-          const props = e.features[0].properties;
-          const coord = e.features[0].geometry.coordinates.slice();
-          
-          new maplibregl.Popup()
-            .setLngLat(coord)
-            .setHTML(`
-              <div style="color: #18181b; padding: 6px; font-family: sans-serif; min-width: 170px;">
-                <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 6px;">${props.dispositivo_id}</strong>
-                <div style="font-size: 11px; line-height: 1.6;">
-                  <div>🕒 Hora: <b>${props.hora}</b></div>
-                  <div>🚀 Vel: <b>${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
-                  <div>⛰️ Alt: <b>${props.altitud} m</b></div>
-                  <div>🔥 Temp: <b>${props.temperatura} °C</b></div>
-                  <div>〰️ Vib: <b>${props.vibracion} G</b></div>
-                  <div>📐 Pitch/Roll: <b>${props.pitch}° / ${props.roll}°</b></div>
-                  <div>🔋 Bat: <b>${props.bateria}% (${props.voltaje}V)</b></div>
-                </div>
-              </div>
-            `)
-            .addTo(referenciaMapa.current);
-        });
-
-        referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
-          referenciaMapa.current.getCanvas().style.cursor = 'pointer';
-        });
-        referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
-          referenciaMapa.current.getCanvas().style.cursor = '';
-        });
       }
 
       const elementoMarcador = document.createElement('div');
@@ -362,7 +362,7 @@ function MapaView({ auth, alVolver }) {
       iconoContenedor.style.transition = 'transform 0.3s ease';
 
       const imgCamion = document.createElement('img');
-      imgCamion.src = '/camion.svg';
+      imgCamion.src = `${getSubpath()}/camion.svg`;
       imgCamion.style.width = '20px';
       imgCamion.style.height = '20px';
       imgCamion.style.objectFit = 'contain';
@@ -386,10 +386,17 @@ function MapaView({ auth, alVolver }) {
       elementoMarcador.appendChild(iconoContenedor);
       elementoMarcador.appendChild(etiquetaBadge);
       
-      const marker = new maplibregl.Marker({ element: elementoMarcador })
-        .setLngLat(nuevaCoordenada)
-        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id} (Actual)</strong>`))
-        .addTo(referenciaMapa.current);
+      let marker = null;
+      if (referenciaMapa.current) {
+        try {
+          marker = new maplibregl.Marker({ element: elementoMarcador })
+            .setLngLat(nuevaCoordenada)
+            .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${dispositivo_id} (Actual)</strong>`))
+            .addTo(referenciaMapa.current);
+        } catch(mErr) {
+          console.warn('Error inicializando marcador:', mErr);
+        }
+      }
 
       vehiculo = {
         id: dispositivo_id,
@@ -406,11 +413,17 @@ function MapaView({ auth, alVolver }) {
       
       setFiltrosVisibles(prev => ({ ...prev, [dispositivo_id]: true }));
 
-      if (Object.keys(vehiculosRef.current).length === 1) {
-        referenciaMapa.current.flyTo({ center: nuevaCoordenada, zoom: 15 });
+      if (Object.keys(vehiculosRef.current).length === 1 && referenciaMapa.current) {
+        try {
+          referenciaMapa.current.flyTo({ center: nuevaCoordenada, zoom: 15 });
+        } catch(fErr) {}
       }
     } else {
-      vehiculo.marker.setLngLat(nuevaCoordenada);
+      if (vehiculo.marker) {
+        try {
+          vehiculo.marker.setLngLat(nuevaCoordenada);
+        } catch(mErr) {}
+      }
       vehiculo.coords.push(nuevaCoordenada);
       vehiculo.features[0].geometry.coordinates = vehiculo.coords;
       
@@ -443,8 +456,15 @@ function MapaView({ auth, alVolver }) {
   const cargarHistorialDeHoy = async () => {
     try {
       const res = await fetch(getApiUrl('/api/flota/hoy'), {
-        headers: { 'Authorization': `Bearer ${auth.token}` }
+        headers: { 
+          'Authorization': `Bearer ${auth.token}`,
+          'ngrok-skip-browser-warning': 'true'
+        }
       });
+      if (!res.ok) {
+        console.warn('Respuesta no-OK al consultar historial:', res.status);
+        return;
+      }
       const datosHistorial = await res.json();
       
       if (Array.isArray(datosHistorial) && datosHistorial.length > 0) {
@@ -453,7 +473,11 @@ function MapaView({ auth, alVolver }) {
         });
 
         const ultimo = datosHistorial[datosHistorial.length - 1];
-        referenciaMapa.current.panTo([parseFloat(ultimo.lo), parseFloat(ultimo.la)]);
+        if (referenciaMapa.current && ultimo && ultimo.lo !== undefined && ultimo.la !== undefined) {
+          try {
+            referenciaMapa.current.panTo([parseFloat(ultimo.lo), parseFloat(ultimo.la)]);
+          } catch(panErr) {}
+        }
         setVehiculosUI({ ...vehiculosRef.current });
       }
     } catch (e) {
