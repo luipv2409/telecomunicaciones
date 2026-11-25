@@ -4,6 +4,7 @@ import websocketPlugin from '@fastify/websocket';
 import fastifyJwt from '@fastify/jwt';
 import { rutasHistorico } from './routes';
 import { rutasPuente } from './puente';
+import { rutasCamaraActuadores } from './camara_actuadores';
 import { configurarWebSockets } from './websocket';
 
 const iniciarServidor = async () => {
@@ -15,10 +16,11 @@ const iniciarServidor = async () => {
   });
   await fastify.register(websocketPlugin);
   await fastify.register(fastifyJwt, {
-    secret: 'super-secreto-teleco-123'
+    secret: process.env.JWT_SECRET || 'super-secreto-teleco-123'
   });
   await fastify.register(rutasHistorico);
   await fastify.register(rutasPuente);
+  await fastify.register(rutasCamaraActuadores);
 
   configurarWebSockets(fastify);
 

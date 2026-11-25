@@ -53,6 +53,7 @@ frontend/android/app/*.iml
 .env
 .env.*
 !.env.example
+docker-compose.override.yml
 
 # Logs y bases de datos locales
 *.log
@@ -66,3 +67,4 @@ db_data/
 *.swo
 .DS_Store
 Thumbs.db
+*.rar

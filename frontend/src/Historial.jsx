@@ -137,11 +137,47 @@ export default function Historial({ auth, alVolver }) {
 
       if (data.length > 0 && referenciaMapa.current) {
         const coords = data.map(d => [parseFloat(d.lo), parseFloat(d.la)]);
+
+        // Segmentar si hay saltos de GPS > 250m para no trazar líneas rectas que crucen la ciudad
+        const calcularDist = (c1, c2) => {
+          const R = 6371000;
+          const dLat = (c2[1] - c1[1]) * Math.PI / 180;
+          const dLon = (c2[0] - c1[0]) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(c1[1] * Math.PI / 180) * Math.cos(c2[1] * Math.PI / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        };
+
+        const segmentos = [];
+        let segActual = [];
+        for (let i = 0; i < coords.length; i++) {
+          const c = coords[i];
+          if (segActual.length === 0) {
+            segActual.push(c);
+          } else {
+            const d = calcularDist(segActual[segActual.length - 1], c);
+            if (d > 250) {
+              if (segActual.length > 1) {
+                segmentos.push(segActual);
+              } else {
+                segmentos.push([segActual[0], segActual[0]]);
+              }
+              segActual = [c];
+            } else {
+              segActual.push(c);
+            }
+          }
+        }
+        if (segActual.length > 0) {
+          segmentos.push(segActual.length > 1 ? segActual : [segActual[0], segActual[0]]);
+        }
+
         referenciaMapa.current.getSource('ruta-historial').setData({
           type: 'FeatureCollection',
           features: [{
             type: 'Feature',
-            geometry: { type: 'LineString', coordinates: coords }
+            geometry: { type: 'MultiLineString', coordinates: segmentos }
           }]
         });
 

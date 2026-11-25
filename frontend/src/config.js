@@ -1,5 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 
+export const CARTO_API_KEY = import.meta.env.VITE_CARTO_API_KEY || '';
+
 const STORAGE_KEY = 'TRACEMIN_SERVER_CONFIG';
 
 export const getDefaultConfig = () => {

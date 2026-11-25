@@ -195,3 +195,7 @@ TRACE-MIN opera como **Sistema 3** compartiendo la URL fija pública permanente 
 
 Para desplegar un **Cuarto (o N-ésimo) sistema** en esta misma máquina utilizando esta misma URL, entrega a tu agente de IA el manual de arquitectura:  
 👉 [MANUAL_EXPONER_SISTEMAS_INTERNET.md](file:///c:/xampp/htdocs/teleco/MANUAL_EXPONER_SISTEMAS_INTERNET.md).
+
+
+Con tu celular o PC, conéctate a la red Wi-Fi: TRACEMIN-ESP32 (clave: tracemin123).
+Se abrirá la página web en http://192.168.4.1.

@@ -6,7 +6,8 @@ import Dashboard from './Dashboard';
 import Historial from './Historial';
 import Geocercas from './Geocercas';
 import ConfigModal from './ConfigModal';
-import { getApiUrl, getWsUrl, getConfig, getSubpath } from './config';
+import DetalleVehiculoModal from './DetalleVehiculoModal';
+import { getApiUrl, getWsUrl, getConfig, getSubpath, CARTO_API_KEY } from './config';
 
 function Login({ onLogin, alVolver, alAbrirConfig }) {
   const [username, setUsername] = useState('');
@@ -96,6 +97,24 @@ function Login({ onLogin, alVolver, alAbrirConfig }) {
 const estiloMapa = {
   version: 8,
   sources: {
+    'carto-dark': {
+      type: 'raster',
+      tiles: [
+        `https://a.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_API_KEY}`,
+        `https://b.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_API_KEY}`,
+        `https://c.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_API_KEY}`
+      ],
+      tileSize: 256,
+      attribution: '&copy; CARTO & OpenStreetMap'
+    },
+    'esri-sat': {
+      type: 'raster',
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+      ],
+      tileSize: 256,
+      attribution: '&copy; ESRI World Imagery'
+    },
     'osm-tiles': {
       type: 'raster',
       tiles: [
@@ -109,11 +128,28 @@ const estiloMapa = {
   },
   layers: [
     {
-      id: 'osm-tiles-layer',
+      id: 'layer-carto-dark',
+      type: 'raster',
+      source: 'carto-dark',
+      minzoom: 0,
+      maxzoom: 20,
+      layout: { visibility: 'visible' }
+    },
+    {
+      id: 'layer-esri-sat',
+      type: 'raster',
+      source: 'esri-sat',
+      minzoom: 0,
+      maxzoom: 19,
+      layout: { visibility: 'none' }
+    },
+    {
+      id: 'layer-osm-tiles',
       type: 'raster',
       source: 'osm-tiles',
       minzoom: 0,
-      maxzoom: 19
+      maxzoom: 19,
+      layout: { visibility: 'none' }
     }
   ]
 };
@@ -125,6 +161,8 @@ function MapaView({ auth, alVolver }) {
   const [vehiculosUI, setVehiculosUI] = useState({}); 
   const [filtrosVisibles, setFiltrosVisibles] = useState({});
   const [alertasEnVivo, setAlertasEnVivo] = useState([]);
+  const [vehiculoSeleccionadoModal, setVehiculoSeleccionadoModal] = useState(null);
+  const [capaActiva, setCapaActiva] = useState('oscuro'); // 'oscuro' | 'satelital' | 'calles'
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -208,6 +246,24 @@ function MapaView({ auth, alVolver }) {
     return Number(valor).toFixed(decimales);
   };
 
+  const calcularDistanciaMetros = (c1, c2) => {
+    if (!c1 || !c2) return 0;
+    const [lon1, lat1] = c1;
+    const [lon2, lat2] = c2;
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const esPuntoFallback = (coord) => {
+    // Coordenadas base simuladas de la Plaza 14 de Septiembre (-17.3935, -66.1570)
+    return calcularDistanciaMetros(coord, [-66.1570, -17.3935]) < 80;
+  };
+
   const registrarOActualizarVehiculo = (datos) => {
     const { 
       dispositivo_id, 
@@ -244,7 +300,11 @@ function MapaView({ auth, alVolver }) {
       bateria: formatearNumero(bateria, 0, '100'),
       voltaje: formatearNumero(voltaje, 2, '3.70'),
       pitch: formatearNumero(pitch, 1, '0.0'),
-      roll: formatearNumero(roll, 1, '0.0')
+      roll: formatearNumero(roll, 1, '0.0'),
+      aceleracion_x: formatearNumero(datos.aceleracion_x ?? datos.ax, 2, '0.00'),
+      aceleracion_y: formatearNumero(datos.aceleracion_y ?? datos.ay, 2, '0.00'),
+      aceleracion_z: formatearNumero(datos.aceleracion_z ?? datos.az, 2, '1.00'),
+      sensores_extra: datos.sensores_extra || datos.se || null
     };
 
     let vehiculo = vehiculosRef.current[dispositivo_id];
@@ -252,11 +312,13 @@ function MapaView({ auth, alVolver }) {
     if (!vehiculo) {
       const color = colores[Object.keys(vehiculosRef.current).length % colores.length];
       const sourceId = `ruta-${dispositivo_id}`;
+      const esFallbackInicial = esPuntoFallback(nuevaCoordenada);
+      const segmentosIniciales = [[nuevaCoordenada, nuevaCoordenada]];
       
       const featuresIniciales = [
         { 
           type: 'Feature', 
-          geometry: { type: 'LineString', coordinates: [nuevaCoordenada, nuevaCoordenada] }, 
+          geometry: { type: 'MultiLineString', coordinates: segmentosIniciales }, 
           properties: {} 
         },
         { 
@@ -281,7 +343,7 @@ function MapaView({ auth, alVolver }) {
               id: `capa-linea-${dispositivo_id}`,
               type: 'line',
               source: sourceId,
-              filter: ['==', '$type', 'LineString'],
+              filter: ['!=', '$type', 'Point'],
               layout: { 'line-join': 'round', 'line-cap': 'round' },
               paint: { 
                 'line-color': color, 
@@ -312,19 +374,21 @@ function MapaView({ auth, alVolver }) {
             const props = e.features[0].properties;
             const coord = e.features[0].geometry.coordinates.slice();
             
-            new maplibregl.Popup()
+            new maplibregl.Popup({ className: 'dark-hud-popup' })
               .setLngLat(coord)
               .setHTML(`
-                <div style="color: #18181b; padding: 6px; font-family: sans-serif; min-width: 170px;">
-                  <strong style="color: #dc2626; display: block; font-size: 14px; border-bottom: 1px solid #e4e4e7; padding-bottom: 4px; margin-bottom: 6px;">${props.dispositivo_id}</strong>
-                  <div style="font-size: 11px; line-height: 1.6;">
-                    <div>🕒 Hora: <b>${props.hora}</b></div>
-                    <div>🚀 Vel: <b>${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
-                    <div>⛰️ Alt: <b>${props.altitud} m</b></div>
-                    <div>🔥 Temp: <b>${props.temperatura} °C</b></div>
-                    <div>〰️ Vib: <b>${props.vibracion} G</b></div>
-                    <div>📐 Pitch/Roll: <b>${props.pitch}° / ${props.roll}°</b></div>
-                    <div>🔋 Bat: <b>${props.bateria}% (${props.voltaje}V)</b></div>
+                <div style="color: #f4f4f5; padding: 4px; font-family: ui-sans-serif, system-ui, sans-serif; min-width: 185px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #27272a; padding-bottom: 5px; margin-bottom: 6px;">
+                    <strong style="color: #ef4444; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;">${props.dispositivo_id}</strong>
+                    <span style="font-size: 10px; color: #a1a1aa; font-family: monospace;">${props.hora}</span>
+                  </div>
+                  <div style="font-size: 11px; line-height: 1.6; font-family: monospace;">
+                    <div>🚀 <span style="color: #a1a1aa;">Vel:</span> <b style="color: #22d3ee;">${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
+                    <div>⛰️ <span style="color: #a1a1aa;">Alt:</span> <b style="color: #818cf8;">${props.altitud} m</b></div>
+                    <div>🔥 <span style="color: #a1a1aa;">Temp:</span> <b style="color: #fb923c;">${props.temperatura} °C</b></div>
+                    <div>〰️ <span style="color: #a1a1aa;">Vib:</span> <b style="color: #facc15;">${props.vibracion} G</b></div>
+                    <div>📐 <span style="color: #a1a1aa;">Pitch/Roll:</span> <b style="color: #38bdf8;">${props.pitch}° / ${props.roll}°</b></div>
+                    <div>🔋 <span style="color: #a1a1aa;">Batería:</span> <b style="color: #4ade80;">${props.bateria}% (${props.voltaje}V)</b></div>
                   </div>
                 </div>
               `)
@@ -385,6 +449,13 @@ function MapaView({ auth, alVolver }) {
 
       elementoMarcador.appendChild(iconoContenedor);
       elementoMarcador.appendChild(etiquetaBadge);
+
+      elementoMarcador.onclick = (e) => {
+        e.stopPropagation();
+        if (vehiculosRef.current[dispositivo_id]) {
+          setVehiculoSeleccionadoModal({ ...vehiculosRef.current[dispositivo_id] });
+        }
+      };
       
       let marker = null;
       if (referenciaMapa.current) {
@@ -404,6 +475,8 @@ function MapaView({ auth, alVolver }) {
         marker,
         iconoContenedor,
         coords: [nuevaCoordenada],
+        segmentos: segmentosIniciales,
+        esSoloFallback: esFallbackInicial,
         features: featuresIniciales,
         sourceId,
         ultimoTimestamp: tiempoMs,
@@ -424,15 +497,84 @@ function MapaView({ auth, alVolver }) {
           vehiculo.marker.setLngLat(nuevaCoordenada);
         } catch(mErr) {}
       }
-      vehiculo.coords.push(nuevaCoordenada);
-      vehiculo.features[0].geometry.coordinates = vehiculo.coords;
-      
-      vehiculo.features.push({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: nuevaCoordenada },
-        properties: puntoPropiedades
-      });
-      
+
+      const esNuevoFallback = esPuntoFallback(nuevaCoordenada);
+
+      // Si el vehículo antes solo tenía puntos simulados en la Plaza y ahora recibe GPS real:
+      if (vehiculo.esSoloFallback && !esNuevoFallback) {
+        vehiculo.esSoloFallback = false;
+        vehiculo.coords = [nuevaCoordenada];
+        vehiculo.segmentos = [[nuevaCoordenada, nuevaCoordenada]];
+        vehiculo.features = [
+          {
+            type: 'Feature',
+            geometry: { type: 'MultiLineString', coordinates: vehiculo.segmentos },
+            properties: {}
+          },
+          {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: nuevaCoordenada },
+            properties: puntoPropiedades
+          }
+        ];
+      } else {
+        const ultimaCoord = vehiculo.coords && vehiculo.coords.length > 0 
+          ? vehiculo.coords[vehiculo.coords.length - 1] 
+          : nuevaCoordenada;
+        const distSalto = calcularDistanciaMetros(ultimaCoord, nuevaCoordenada);
+        const velNum = parseFloat(puntoPropiedades.velocidad || 0);
+
+        // Filtro de ruido GPS en reposo:
+        // Si el vehículo está quieto (desplazamiento < 10m y velocidad < 2.0 km/h),
+        // se fija velocidad a 0.0 y NO se añaden puntos a la línea de ruta para evitar telarañas de deriva
+        const estaEnReposo = distSalto < 10.0 && velNum < 2.0;
+
+        if (estaEnReposo) {
+          puntoPropiedades.velocidad = '0.0';
+        }
+
+        if (!vehiculo.coords) vehiculo.coords = [];
+        if (!vehiculo.segmentos) vehiculo.segmentos = [[nuevaCoordenada, nuevaCoordenada]];
+
+        if (!estaEnReposo) {
+          vehiculo.coords.push(nuevaCoordenada);
+
+          // Si la distancia entre lecturas consecutivas supera 250 metros,
+          // se trata de un salto de GPS (arranque en frío, reconexión o cambio abrupto).
+          // Se añade un segmento nuevo en MultiLineString para NUNCA trazar una línea recta entre ellos.
+          if (distSalto > 250) {
+            vehiculo.segmentos.push([nuevaCoordenada, nuevaCoordenada]);
+          } else {
+            const ultimoSeg = vehiculo.segmentos[vehiculo.segmentos.length - 1];
+            if (ultimoSeg) {
+              ultimoSeg.push(nuevaCoordenada);
+            } else {
+              vehiculo.segmentos.push([nuevaCoordenada, nuevaCoordenada]);
+            }
+          }
+
+          vehiculo.features[0].geometry = {
+            type: 'MultiLineString',
+            coordinates: vehiculo.segmentos
+          };
+        }
+
+        // Actualizar el punto actual (marcador del vehículo en vivo)
+        if (vehiculo.features.length > 1) {
+          vehiculo.features[vehiculo.features.length - 1] = {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: nuevaCoordenada },
+            properties: puntoPropiedades
+          };
+        } else {
+          vehiculo.features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: nuevaCoordenada },
+            properties: puntoPropiedades
+          });
+        }
+      }
+
       if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
         const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
         if (fuenteDatos) {
@@ -515,6 +657,7 @@ function MapaView({ auth, alVolver }) {
           if (datos.dispositivo_id && datos.lo !== undefined && datos.la !== undefined) {
             registrarOActualizarVehiculo(datos);
             setVehiculosUI({ ...vehiculosRef.current });
+            setVehiculoSeleccionadoModal(prev => (prev && prev.id === datos.dispositivo_id ? { ...vehiculosRef.current[datos.dispositivo_id] } : prev));
           }
         } catch (err) {}
       };
@@ -548,6 +691,54 @@ function MapaView({ auth, alVolver }) {
     }
   };
 
+  const limpiarTrazoVehiculo = (id) => {
+    const v = vehiculosRef.current[id];
+    if (!v) return;
+    const ultima = v.coords && v.coords.length > 0 ? v.coords[v.coords.length - 1] : null;
+    if (!ultima) return;
+
+    v.coords = [ultima];
+    v.segmentos = [[ultima, ultima]];
+    v.features = [
+      {
+        type: 'Feature',
+        geometry: { type: 'MultiLineString', coordinates: v.segmentos },
+        properties: {}
+      },
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: ultima },
+        properties: { ...v }
+      }
+    ];
+
+    if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
+      const src = referenciaMapa.current.getSource(v.sourceId);
+      if (src) {
+        src.setData({ type: 'FeatureCollection', features: v.features });
+      }
+    }
+    setVehiculosUI({ ...vehiculosRef.current });
+  };
+
+  const cambiarCapaMapa = (tipo) => {
+    setCapaActiva(tipo);
+    if (!referenciaMapa.current) return;
+    try {
+      if (referenciaMapa.current.getLayer('layer-carto-dark')) {
+        referenciaMapa.current.setLayoutProperty('layer-carto-dark', 'visibility', tipo === 'oscuro' ? 'visible' : 'none');
+      }
+      if (referenciaMapa.current.getLayer('layer-esri-sat')) {
+        referenciaMapa.current.setLayoutProperty('layer-esri-sat', 'visibility', tipo === 'satelital' ? 'visible' : 'none');
+      }
+      if (referenciaMapa.current.getLayer('layer-osm-tiles')) {
+        referenciaMapa.current.setLayoutProperty('layer-osm-tiles', 'visibility', tipo === 'calles' ? 'visible' : 'none');
+      }
+    } catch (e) {
+      console.warn('Error cambiando capa:', e);
+    }
+  };
+
   const ahora = Date.now();
 
   return (
@@ -557,6 +748,37 @@ function MapaView({ auth, alVolver }) {
         className="absolute inset-0 w-full h-full" 
         style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 0 }} 
       />
+
+      {/* Selector Flotante de Estilos de Mapa */}
+      <div className="absolute top-4 right-14 z-20 flex bg-zinc-900/90 backdrop-blur-md border border-zinc-700/80 rounded-xl p-1 shadow-2xl">
+        <button
+          onClick={() => cambiarCapaMapa('oscuro')}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+            capaActiva === 'oscuro' ? 'bg-red-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
+          }`}
+          title="Mapa táctico nocturno para telemetría"
+        >
+          <span>🕶️</span> Táctico
+        </button>
+        <button
+          onClick={() => cambiarCapaMapa('satelital')}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+            capaActiva === 'satelital' ? 'bg-red-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
+          }`}
+          title="Fotografía satelital de alta resolución"
+        >
+          <span>🛰️</span> Satélite
+        </button>
+        <button
+          onClick={() => cambiarCapaMapa('calles')}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+            capaActiva === 'calles' ? 'bg-red-600 text-white shadow-md' : 'text-zinc-400 hover:text-white'
+          }`}
+          title="Mapa estándar de calles OSM"
+        >
+          <span>🗺️</span> Calles
+        </button>
+      </div>
 
       {alertasEnVivo.length > 0 && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 max-w-md w-full px-4 pointer-events-none">
@@ -656,9 +878,56 @@ function MapaView({ auth, alVolver }) {
                           </div>
                         </div>
 
+                        {/* Indicador Sonar Proximidad HC-SR04 */}
+                        {(() => {
+                          const extra = vehiculo.sensores_extra && typeof vehiculo.sensores_extra === 'object' ? vehiculo.sensores_extra : {};
+                          const distRaw = extra.distancia_cm !== undefined ? parseFloat(extra.distancia_cm) : null;
+                          if (distRaw === null || isNaN(distRaw)) return null;
+                          const esCritico = distRaw > 0 && distRaw < 20;
+                          const esPrecaucion = distRaw >= 20 && distRaw <= 60;
+                          return (
+                            <div className={`px-2 py-1 rounded-lg text-[10px] font-mono flex items-center justify-between border ${
+                              esCritico 
+                                ? 'bg-red-950/80 text-red-300 border-red-600 animate-pulse' 
+                                : esPrecaucion 
+                                ? 'bg-amber-950/80 text-amber-300 border-amber-600' 
+                                : 'bg-zinc-900/90 text-emerald-400 border-zinc-800'
+                            }`}>
+                              <span className="flex items-center gap-1 font-bold">
+                                <span>📡</span>
+                                <span>{esCritico ? '¡OBSTÁCULO CERCANO!' : esPrecaucion ? 'PROXIMIDAD' : 'RADAR ECO'}</span>
+                              </span>
+                              <span className="font-bold text-xs">{distRaw > 0 ? `${distRaw.toFixed(0)} cm` : 'LIBRE'}</span>
+                            </div>
+                          );
+                        })()}
+
                         <div className="flex justify-between items-center text-[10px] text-zinc-500 px-1">
                           <span>Pitch: <b className="text-zinc-300">{vehiculo.pitch || '0.0'}°</b> | Roll: <b className="text-zinc-300">{vehiculo.roll || '0.0'}°</b></span>
                           <span>🕒 {vehiculo.ultimaAct}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-zinc-900">
+                          <button
+                            onClick={() => setVehiculoSeleccionadoModal(vehiculo)}
+                            className="flex-1 bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 rounded-lg py-1.5 px-2 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                          >
+                            <span>📷</span> Sensores / Cámara / Relés
+                          </button>
+                          <button
+                            onClick={() => centrarEnVehiculo(vehiculo.id)}
+                            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-zinc-700 transition"
+                            title="Centrar en mapa"
+                          >
+                            📍
+                          </button>
+                          <button
+                            onClick={() => limpiarTrazoVehiculo(vehiculo.id)}
+                            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-400 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-zinc-700 transition"
+                            title="Limpiar trazo de ruta en el mapa"
+                          >
+                            🧹
+                          </button>
                         </div>
                       </div>
                     )}
@@ -669,6 +938,14 @@ function MapaView({ auth, alVolver }) {
           )}
         </div>
       </div>
+
+      {vehiculoSeleccionadoModal && (
+        <DetalleVehiculoModal
+          vehiculo={vehiculoSeleccionadoModal}
+          alCerrar={() => setVehiculoSeleccionadoModal(null)}
+          auth={auth}
+        />
+      )}
     </div>
   );
 }
@@ -823,8 +1100,12 @@ export default function App() {
     : 'Local / Mismo Servidor';
 
   return (
-    <div className="w-full h-screen bg-zinc-950 flex flex-col items-center justify-center p-4 font-sans relative">
-      <div className="bg-zinc-900 p-10 rounded-2xl shadow-2xl border border-zinc-800 max-w-md w-full text-center relative">
+    <div className="w-full h-screen bg-zinc-950 bg-tactical-grid flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden">
+      
+      {/* Resplandor ambiental de fondo */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-red-600/10 blur-[120px] rounded-full pointer-events-none" />
+
+      <div className="bg-zinc-900/90 backdrop-blur-xl p-8 sm:p-10 rounded-3xl shadow-2xl border border-zinc-800 max-w-md w-full text-center relative z-10">
         
         <button
           onClick={() => setModalConfigAbierto(true)}
@@ -835,59 +1116,105 @@ export default function App() {
           <span className="font-mono text-[11px]">Servidor</span>
         </button>
 
-        <h1 className="text-4xl font-bold text-red-500 mb-2 tracking-tight">TRACE-MIN</h1>
-        <p className="text-zinc-400 mb-2 text-sm">Sistema de Telemetría Vehicular & Sensor Hub</p>
-
-        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 mb-6">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span className="truncate max-w-[200px]" title={hostDisplay}>Host: {hostDisplay}</span>
+        <div className="inline-block px-3 py-1 rounded-full bg-red-950/60 border border-red-800/80 text-[10px] font-mono text-red-400 font-bold uppercase tracking-widest mb-3">
+          SISTEMA DE TELEMETRÍA MINERA & IOT
         </div>
 
-        <div className="flex flex-col gap-3">
+        <h1 className="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-red-500 via-rose-500 to-amber-500 mb-2 tracking-tight">
+          TRACE-MIN
+        </h1>
+        <p className="text-zinc-400 mb-4 text-xs sm:text-sm">
+          Monitoreo en Tiempo Real, Inercial & Sensor Hub
+        </p>
+
+        <div className="flex flex-col items-center gap-1.5 mb-6">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="truncate max-w-[220px]" title={hostDisplay}>Host: {hostDisplay}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2.5">
           <button 
             onClick={() => cambiarModo('mapa')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-gradient-to-r from-zinc-800 to-zinc-800/90 hover:from-zinc-700 hover:to-zinc-750 border border-zinc-700 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-between group"
           >
-            <span className="text-xl">🗺️</span>
-            Monitor en Tiempo Real
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:scale-110 transition-transform">🗺️</span>
+              <span className="text-sm font-semibold">Monitor en Tiempo Real</span>
+            </div>
+            <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">→</span>
           </button>
 
           <button 
             onClick={() => cambiarModo('dashboard')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-gradient-to-r from-zinc-800 to-zinc-800/90 hover:from-zinc-700 hover:to-zinc-750 border border-zinc-700 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-between group"
           >
-            <span className="text-xl">📊</span>
-            Dashboard Analítico (KPIs)
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:scale-110 transition-transform">📊</span>
+              <span className="text-sm font-semibold">Dashboard Analítico (KPIs)</span>
+            </div>
+            <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">→</span>
           </button>
 
           <button 
             onClick={() => cambiarModo('historial')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-gradient-to-r from-zinc-800 to-zinc-800/90 hover:from-zinc-700 hover:to-zinc-750 border border-zinc-700 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-between group"
           >
-            <span className="text-xl">⏪</span>
-            Historial de Rutas
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:scale-110 transition-transform">⏪</span>
+              <span className="text-sm font-semibold">Historial de Rutas</span>
+            </div>
+            <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">→</span>
           </button>
 
           <button 
             onClick={() => cambiarModo('geocercas')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
+            className="w-full bg-gradient-to-r from-zinc-800 to-zinc-800/90 hover:from-zinc-700 hover:to-zinc-750 border border-zinc-700 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-between group"
           >
-            <span className="text-xl">📍</span>
-            Configurar Geocercas
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:scale-110 transition-transform">📍</span>
+              <span className="text-sm font-semibold">Configurar Geocercas</span>
+            </div>
+            <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">→</span>
           </button>
 
           <button 
             onClick={() => cambiarModo('simulador')}
-            className="w-full bg-red-600 hover:bg-red-700 border border-red-500 text-white font-semibold py-3 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 mt-2"
+            className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 border border-red-500 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-red-950/60 flex items-center justify-between group mt-1"
           >
-            <span className="text-xl">📱</span>
-            Simular Sensores Móviles
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:scale-110 transition-transform">📱</span>
+              <span className="text-sm font-bold">Puente Móvil / Simulador</span>
+            </div>
+            <span className="text-xs font-mono bg-red-700/60 px-2 py-0.5 rounded-full">EN VIVO</span>
           </button>
+
+          {/* Descarga Directa APK Android */}
+          <div className="pt-2 border-t border-zinc-800/80 mt-1 flex flex-col gap-1.5">
+            <a 
+              href="/tracemin.apk" 
+              download="tracemin.apk"
+              className="w-full bg-zinc-950 hover:bg-zinc-800/90 border border-emerald-500/40 hover:border-emerald-500 text-emerald-400 font-semibold py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-xs"
+            >
+              <span>📦</span>
+              <span>Descargar App Nativa Android (.APK)</span>
+            </a>
+
+            <a
+              href={`https://${configActual.host || window.location.hostname}:8443/simulador`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors underline"
+            >
+              🔒 Abrir Simulador Web en HTTPS (Puerto 8443)
+            </a>
+          </div>
           
           {auth && (
             <button 
               onClick={handleLogout}
-              className="w-full mt-2 text-zinc-500 hover:text-zinc-300 text-sm underline pb-2"
+              className="w-full mt-2 text-zinc-500 hover:text-zinc-300 text-xs underline pb-1"
             >
               Cerrar Sesión ({auth.username})
             </button>

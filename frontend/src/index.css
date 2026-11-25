@@ -1,3 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Outfit', sans-serif;
+    background-color: #09090b;
+    color: #f4f4f5;
+  }
+  
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* MapLibre Dark Popups */
+.maplibregl-popup {
+  z-index: 35 !important;
+}
+
+.maplibregl-popup-content {
+  background-color: #121215 !important;
+  color: #f4f4f5 !important;
+  border: 1px solid #27272a !important;
+  border-radius: 14px !important;
+  padding: 12px 14px !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.maplibregl-popup-tip {
+  border-top-color: #121215 !important;
+  border-bottom-color: #121215 !important;
+}
+
+.maplibregl-popup-close-button {
+  color: #a1a1aa !important;
+  padding: 4px 8px !important;
+  font-size: 16px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+.maplibregl-popup-close-button:hover {
+  color: #ffffff !important;
+  background-color: #27272a !important;
+}
+
+/* Pulse & Sonar Radar Keyframes */
+@keyframes sonar-wave {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.animate-sonar {
+  animation: sonar-wave 1.8s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+}
+
+@keyframes tactical-grid {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 40px;
+  }
+}
+
+.bg-tactical-grid {
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}

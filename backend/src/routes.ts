@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import '@fastify/jwt';
 import { db } from './db';
 import bcrypt from 'bcryptjs';
+import { obtenerComandosPendientes, registrarEstadoActuadores } from './camara_actuadores';
 
 const MAX_DISPOSITIVOS_DIARIOS = 10;
 const dispositivosActivos = new Set<string>();
@@ -356,6 +357,7 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         aceleracion_x,
         aceleracion_y,
         aceleracion_z,
+        sensores_extra: b.sensores_extra || b.se || null,
         timestamp
       });
 
@@ -435,7 +437,12 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
         console.error('Error generando alertas en telemetria:', alertErr);
       }
 
-      return { estado: 'ok' };
+      if (b.actuadores && typeof b.actuadores === 'object') {
+        registrarEstadoActuadores(dispositivo_id, b.actuadores);
+      }
+
+      const comandos = obtenerComandosPendientes(dispositivo_id);
+      return { estado: 'ok', comandos };
     } catch (error) {
       console.error('Error en POST telemetria:', error);
       reply.status(500).send({ estado: 'error' });
