@@ -26,6 +26,8 @@ services:
       HOST_IPS: ${HOST_IPS:-}
     ports:
       - "3001:3000"
+    volumes:
+      - ota_data:/app/ota_storage
     depends_on:
       - db
     restart: always
@@ -45,3 +47,4 @@ services:
 
 volumes:
   db_data:
+  ota_data:

@@ -5,10 +5,13 @@ import fastifyJwt from '@fastify/jwt';
 import { rutasHistorico } from './routes';
 import { rutasPuente } from './puente';
 import { rutasCamaraActuadores } from './camara_actuadores';
+import { rutasOta } from './ota';
 import { configurarWebSockets } from './websocket';
 
 const iniciarServidor = async () => {
-  const fastify = Fastify();
+  const fastify = Fastify({
+    bodyLimit: 16 * 1024 * 1024
+  });
 
   await fastify.register(fastifyCors, {
     origin: true,
@@ -21,6 +24,7 @@ const iniciarServidor = async () => {
   await fastify.register(rutasHistorico);
   await fastify.register(rutasPuente);
   await fastify.register(rutasCamaraActuadores);
+  await fastify.register(rutasOta);
 
   configurarWebSockets(fastify);
 

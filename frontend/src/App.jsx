@@ -7,6 +7,7 @@ import Historial from './Historial';
 import Geocercas from './Geocercas';
 import ConfigModal from './ConfigModal';
 import DetalleVehiculoModal from './DetalleVehiculoModal';
+import OtaManager from './OtaManager';
 import { getApiUrl, getWsUrl, getConfig, getSubpath, CARTO_API_KEY } from './config';
 
 function Login({ onLogin, alVolver, alAbrirConfig }) {
@@ -154,7 +155,7 @@ const estiloMapa = {
   ]
 };
 
-function MapaView({ auth, alVolver }) {
+function MapaView({ auth, alVolver, alIrAOta }) {
   const contenedorMapa = useRef(null);
   const referenciaMapa = useRef(null);
   const vehiculosRef = useRef({}); 
@@ -811,6 +812,15 @@ function MapaView({ auth, alVolver }) {
         <div className="p-3.5 border-b border-zinc-800">
           <div className="flex items-center justify-between mb-1">
             <h1 className="text-lg font-bold text-red-500">Panel de Flota Activa</h1>
+            {auth.rol === 'admin' && alIrAOta && (
+              <button
+                onClick={alIrAOta}
+                className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-cyan-300 hover:text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition"
+                title="Actualización remota de firmware ESP32 (OTA)"
+              >
+                <span>🔄</span> OTA
+              </button>
+            )}
           </div>
           <div className="text-xs text-zinc-400 flex justify-between items-center">
             <span>Operador: <b className="text-white">{auth.username}</b> ({auth.rol})</span>
@@ -848,6 +858,14 @@ function MapaView({ auth, alVolver }) {
                         {activo ? 'EN LÍNEA' : 'OFFLINE'}
                       </span>
                     </div>
+                    {vehiculo.sensores_extra?.firmware && (
+                      <div className="text-[10px] font-mono text-zinc-500 mb-1.5 flex items-center justify-between px-0.5">
+                        <span>Firmware ESP32: <b className="text-cyan-400">v{vehiculo.sensores_extra.firmware}</b></span>
+                        {vehiculo.sensores_extra.wifi_ssid && (
+                          <span className="truncate max-w-[130px]">📶 {vehiculo.sensores_extra.wifi_ssid}</span>
+                        )}
+                      </div>
+                    )}
                     
                     {filtrosVisibles[vehiculo.id] && (
                       <div className="flex flex-col gap-2 mt-2">
@@ -1012,7 +1030,33 @@ export default function App() {
         </>
       );
     }
-    return <MapaView auth={auth} alVolver={() => cambiarModo('menu')} />;
+    return <MapaView auth={auth} alVolver={() => cambiarModo('menu')} alIrAOta={() => cambiarModo('ota')} />;
+  }
+
+  if (modo === 'ota') {
+    if (!auth) {
+      return (
+        <>
+          <Login
+            onLogin={handleLogin}
+            alVolver={() => cambiarModo('menu')}
+            alAbrirConfig={() => setModalConfigAbierto(true)}
+          />
+          <ConfigModal
+            abierto={modalConfigAbierto}
+            alCerrar={() => setModalConfigAbierto(false)}
+            alGuardar={handleConfigGuardada}
+          />
+        </>
+      );
+    }
+    return (
+      <OtaManager
+        auth={auth}
+        alVolver={() => cambiarModo('menu')}
+        alIrAlMapa={() => cambiarModo('mapa')}
+      />
+    );
   }
 
   if (modo === 'simulador') {
@@ -1177,6 +1221,17 @@ export default function App() {
               <span className="text-sm font-semibold">Configurar Geocercas</span>
             </div>
             <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">→</span>
+          </button>
+
+          <button 
+            onClick={() => cambiarModo('ota')}
+            className="w-full bg-gradient-to-r from-zinc-800 to-zinc-800/90 hover:from-zinc-700 hover:to-zinc-750 border border-cyan-700/50 hover:border-cyan-500 text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center justify-between group"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl group-hover:rotate-180 transition-transform duration-500">🔄</span>
+              <span className="text-sm font-semibold">Actualización Remota ESP32 (OTA)</span>
+            </div>
+            <span className="text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800 px-2 py-0.5 rounded-full">CLOUD</span>
           </button>
 
           <button 

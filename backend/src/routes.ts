@@ -3,6 +3,7 @@ import '@fastify/jwt';
 import { db } from './db';
 import bcrypt from 'bcryptjs';
 import { obtenerComandosPendientes, registrarEstadoActuadores } from './camara_actuadores';
+import { registrarHeartbeatOta } from './ota';
 
 const MAX_DISPOSITIVOS_DIARIOS = 10;
 const dispositivosActivos = new Set<string>();
@@ -442,7 +443,8 @@ export const rutasHistorico: FastifyPluginAsync = async (fastify: FastifyInstanc
       }
 
       const comandos = obtenerComandosPendientes(dispositivo_id);
-      return { estado: 'ok', comandos };
+      const ota = registrarHeartbeatOta(fastify, dispositivo_id, b);
+      return ota ? { estado: 'ok', comandos, ota } : { estado: 'ok', comandos };
     } catch (error) {
       console.error('Error en POST telemetria:', error);
       reply.status(500).send({ estado: 'error' });
