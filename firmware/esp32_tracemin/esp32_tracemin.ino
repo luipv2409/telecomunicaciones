@@ -54,7 +54,7 @@
 #define FIRMWARE_VERSION "3.1-ota"
 
 // Marca embebida en el binario .bin para que el servidor detecte la version sola
-static const char MARCA_BINARIO_OTA[] PROGMEM = "TRACEMIN_FW:" FIRMWARE_VERSION "|";
+extern const char MARCA_BINARIO_OTA[] __attribute__((used)) = "TRACEMIN_FW:" FIRMWARE_VERSION "|";
 
 // Cada vez que cambies CONFIG_VERSION, el ESP32 reemplaza la configuracion del
 // SERVIDOR guardada en flash por los valores DEFAULT de abajo (una sola vez).
@@ -1846,10 +1846,8 @@ void setup() {
   cargarConfiguracion();
 
   // Calcular MD5 de la particion activa una sola vez y conservar marca en el .bin
-  if (pgm_read_byte(&MARCA_BINARIO_OTA[0]) != 0) {
-    sketchMd5Actual = ESP.getSketchMD5();
-  }
-  Serial.printf("[OTA] Firmware activo: %s | MD5: %s\n", FIRMWARE_VERSION,
+  sketchMd5Actual = ESP.getSketchMD5();
+  Serial.printf("[OTA] %s | MD5: %s\n", MARCA_BINARIO_OTA,
                 sketchMd5Actual.c_str());
 
   // Comprobar si venimos de completar una actualizacion remota OTA
