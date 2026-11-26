@@ -168,6 +168,7 @@ function MapaView({ auth, alVolver, alIrAOta }) {
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const montadoRef = useRef(true);
+  const centradoInicialHechoRef = useRef(false);
 
   const colores = ['#06b6d4', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444'];
 
@@ -196,9 +197,12 @@ function MapaView({ auth, alVolver, alIrAOta }) {
     window.addEventListener('resize', manejarResize);
 
     const intervaloChequeo = setInterval(() => {
-      cargarHistorialDeHoy();
+      // Solo consultar historial HTTP como respaldo si el WebSocket en vivo no está conectado
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        cargarHistorialDeHoy();
+      }
       setVehiculosUI({ ...vehiculosRef.current });
-    }, 2500);
+    }, 3000);
 
     return () => {
       montadoRef.current = false;
@@ -290,6 +294,9 @@ function MapaView({ auth, alVolver, alIrAOta }) {
     const tiempoMs = timestamp ? new Date(timestamp).getTime() : Date.now();
     const horaLegible = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
 
+    let vehiculo = vehiculosRef.current[dispositivo_id];
+    const sensoresExtraEntrante = datos.sensores_extra || datos.se || null;
+
     const puntoPropiedades = {
       dispositivo_id,
       hora: horaLegible,
@@ -305,10 +312,11 @@ function MapaView({ auth, alVolver, alIrAOta }) {
       aceleracion_x: formatearNumero(datos.aceleracion_x ?? datos.ax, 2, '0.00'),
       aceleracion_y: formatearNumero(datos.aceleracion_y ?? datos.ay, 2, '0.00'),
       aceleracion_z: formatearNumero(datos.aceleracion_z ?? datos.az, 2, '1.00'),
-      sensores_extra: datos.sensores_extra || datos.se || null
+      // Conservar sensores_extra previos (Wi-Fi, Firmware, Radar HC-SR04) si la consulta histórica de BD no los incluye
+      sensores_extra: sensoresExtraEntrante
+        ? { ...(vehiculo?.sensores_extra || {}), ...sensoresExtraEntrante }
+        : (vehiculo?.sensores_extra || null)
     };
-
-    let vehiculo = vehiculosRef.current[dispositivo_id];
 
     if (!vehiculo) {
       const color = colores[Object.keys(vehiculosRef.current).length % colores.length];
@@ -616,7 +624,8 @@ function MapaView({ auth, alVolver, alIrAOta }) {
         });
 
         const ultimo = datosHistorial[datosHistorial.length - 1];
-        if (referenciaMapa.current && ultimo && ultimo.lo !== undefined && ultimo.la !== undefined) {
+        if (!centradoInicialHechoRef.current && referenciaMapa.current && ultimo && ultimo.lo !== undefined && ultimo.la !== undefined) {
+          centradoInicialHechoRef.current = true;
           try {
             referenciaMapa.current.panTo([parseFloat(ultimo.lo), parseFloat(ultimo.la)]);
           } catch(panErr) {}
