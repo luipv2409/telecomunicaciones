@@ -189,6 +189,8 @@ function MapaView({ auth, alVolver, alIrAOta }) {
     mapa.on('load', () => {
       mapa.resize();
       setTimeout(() => mapa.resize(), 300);
+      // Asegurar capas de cualquier vehículo que haya llegado por WS antes de terminar el load
+      Object.values(vehiculosRef.current).forEach((v) => asegurarCapasEnMapa(v));
       cargarHistorialDeHoy();
       iniciarConexionServidor();
     });
@@ -266,7 +268,92 @@ function MapaView({ auth, alVolver, alIrAOta }) {
 
   const esPuntoFallback = (coord) => {
     // Coordenadas base simuladas de la Plaza 14 de Septiembre (-17.3935, -66.1570)
-    return calcularDistanciaMetros(coord, [-66.1570, -17.3935]) < 80;
+    return calcularDistanciaMetros(coord, [-66.1570, -17.3935]) < 35;
+  };
+
+  const asegurarCapasEnMapa = (vehiculo) => {
+    const mapa = referenciaMapa.current;
+    if (!mapa) return false;
+    const { id: dispositivo_id, sourceId, color, features } = vehiculo;
+    const capaLineaId = `capa-linea-${dispositivo_id}`;
+    const capaPuntosId = `capa-puntos-${dispositivo_id}`;
+
+    try {
+      if (!mapa.getSource(sourceId)) {
+        mapa.addSource(sourceId, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features }
+        });
+      }
+
+      if (!mapa.getLayer(capaLineaId)) {
+        mapa.addLayer({
+          id: capaLineaId,
+          type: 'line',
+          source: sourceId,
+          filter: ['!=', '$type', 'Point'],
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': color,
+            'line-width': 3.5,
+            'line-dasharray': [2.5, 1.8],
+            'line-opacity': 0.9
+          }
+        });
+      }
+
+      if (!mapa.getLayer(capaPuntosId)) {
+        mapa.addLayer({
+          id: capaPuntosId,
+          type: 'circle',
+          source: sourceId,
+          filter: ['==', '$type', 'Point'],
+          paint: {
+            'circle-radius': 5,
+            'circle-color': color,
+            'circle-opacity': 0.9,
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': '#ffffff'
+          }
+        });
+
+        mapa.on('click', capaPuntosId, (e) => {
+          const props = e.features[0].properties;
+          const coord = e.features[0].geometry.coordinates.slice();
+
+          new maplibregl.Popup({ className: 'dark-hud-popup' })
+            .setLngLat(coord)
+            .setHTML(`
+              <div style="color: #f4f4f5; padding: 4px; font-family: ui-sans-serif, system-ui, sans-serif; min-width: 185px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #27272a; padding-bottom: 5px; margin-bottom: 6px;">
+                  <strong style="color: #ef4444; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;">${props.dispositivo_id}</strong>
+                  <span style="font-size: 10px; color: #a1a1aa; font-family: monospace;">${props.hora}</span>
+                </div>
+                <div style="font-size: 11px; line-height: 1.6; font-family: monospace;">
+                  <div>🚀 <span style="color: #a1a1aa;">Vel:</span> <b style="color: #22d3ee;">${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
+                  <div>⛰️ <span style="color: #a1a1aa;">Alt:</span> <b style="color: #818cf8;">${props.altitud} m</b></div>
+                  <div>🔥 <span style="color: #a1a1aa;">Temp:</span> <b style="color: #fb923c;">${props.temperatura} °C</b></div>
+                  <div>〰️ <span style="color: #a1a1aa;">Vib:</span> <b style="color: #facc15;">${props.vibracion} G</b></div>
+                  <div>📐 <span style="color: #a1a1aa;">Pitch/Roll:</span> <b style="color: #38bdf8;">${props.pitch}° / ${props.roll}°</b></div>
+                  <div>🔋 <span style="color: #a1a1aa;">Batería:</span> <b style="color: #4ade80;">${props.bateria}% (${props.voltaje}V)</b></div>
+                </div>
+              </div>
+            `)
+            .addTo(mapa);
+        });
+
+        mapa.on('mouseenter', capaPuntosId, () => {
+          mapa.getCanvas().style.cursor = 'pointer';
+        });
+        mapa.on('mouseleave', capaPuntosId, () => {
+          mapa.getCanvas().style.cursor = '';
+        });
+      }
+      return true;
+    } catch (mapErr) {
+      // El estilo del mapa aún se está inicializando; se creará automáticamente en el próximo paquete
+      return false;
+    }
   };
 
   const registrarOActualizarVehiculo = (datos) => {
@@ -336,84 +423,6 @@ function MapaView({ auth, alVolver, alIrAOta }) {
           properties: puntoPropiedades 
         }
       ];
-
-      if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
-        const capaPuntosId = `capa-puntos-${dispositivo_id}`;
-        try {
-          if (!referenciaMapa.current.getSource(sourceId)) {
-            referenciaMapa.current.addSource(sourceId, {
-              type: 'geojson',
-              data: { type: 'FeatureCollection', features: featuresIniciales }
-            });
-          }
-
-          if (!referenciaMapa.current.getLayer(`capa-linea-${dispositivo_id}`)) {
-            referenciaMapa.current.addLayer({
-              id: `capa-linea-${dispositivo_id}`,
-              type: 'line',
-              source: sourceId,
-              filter: ['!=', '$type', 'Point'],
-              layout: { 'line-join': 'round', 'line-cap': 'round' },
-              paint: { 
-                'line-color': color, 
-                'line-width': 3, 
-                'line-dasharray': [3, 2],
-                'line-opacity': 0.65 
-              }
-            });
-          }
-
-          if (!referenciaMapa.current.getLayer(capaPuntosId)) {
-            referenciaMapa.current.addLayer({
-              id: capaPuntosId,
-              type: 'circle',
-              source: sourceId,
-              filter: ['==', '$type', 'Point'],
-              paint: {
-                'circle-radius': 4.5,
-                'circle-color': color,
-                'circle-opacity': 0.75,
-                'circle-stroke-width': 1.5,
-                'circle-stroke-color': '#ffffff'
-              }
-            });
-          }
-
-          referenciaMapa.current.on('click', capaPuntosId, (e) => {
-            const props = e.features[0].properties;
-            const coord = e.features[0].geometry.coordinates.slice();
-            
-            new maplibregl.Popup({ className: 'dark-hud-popup' })
-              .setLngLat(coord)
-              .setHTML(`
-                <div style="color: #f4f4f5; padding: 4px; font-family: ui-sans-serif, system-ui, sans-serif; min-width: 185px;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #27272a; padding-bottom: 5px; margin-bottom: 6px;">
-                    <strong style="color: #ef4444; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;">${props.dispositivo_id}</strong>
-                    <span style="font-size: 10px; color: #a1a1aa; font-family: monospace;">${props.hora}</span>
-                  </div>
-                  <div style="font-size: 11px; line-height: 1.6; font-family: monospace;">
-                    <div>🚀 <span style="color: #a1a1aa;">Vel:</span> <b style="color: #22d3ee;">${props.velocidad} km/h</b> | 🧭 ${props.rumbo}°</div>
-                    <div>⛰️ <span style="color: #a1a1aa;">Alt:</span> <b style="color: #818cf8;">${props.altitud} m</b></div>
-                    <div>🔥 <span style="color: #a1a1aa;">Temp:</span> <b style="color: #fb923c;">${props.temperatura} °C</b></div>
-                    <div>〰️ <span style="color: #a1a1aa;">Vib:</span> <b style="color: #facc15;">${props.vibracion} G</b></div>
-                    <div>📐 <span style="color: #a1a1aa;">Pitch/Roll:</span> <b style="color: #38bdf8;">${props.pitch}° / ${props.roll}°</b></div>
-                    <div>🔋 <span style="color: #a1a1aa;">Batería:</span> <b style="color: #4ade80;">${props.bateria}% (${props.voltaje}V)</b></div>
-                  </div>
-                </div>
-              `)
-              .addTo(referenciaMapa.current);
-          });
-
-          referenciaMapa.current.on('mouseenter', capaPuntosId, () => {
-            referenciaMapa.current.getCanvas().style.cursor = 'pointer';
-          });
-          referenciaMapa.current.on('mouseleave', capaPuntosId, () => {
-            referenciaMapa.current.getCanvas().style.cursor = '';
-          });
-        } catch (mapErr) {
-          console.warn('Error gestionando capa en mapa:', mapErr);
-        }
-      }
 
       const elementoMarcador = document.createElement('div');
       elementoMarcador.style.display = 'flex';
@@ -492,6 +501,7 @@ function MapaView({ auth, alVolver, alIrAOta }) {
         ...puntoPropiedades
       };
       vehiculosRef.current[dispositivo_id] = vehiculo;
+      asegurarCapasEnMapa(vehiculo);
       
       setFiltrosVisibles(prev => ({ ...prev, [dispositivo_id]: true }));
 
@@ -584,7 +594,7 @@ function MapaView({ auth, alVolver, alIrAOta }) {
         }
       }
 
-      if (referenciaMapa.current && referenciaMapa.current.isStyleLoaded()) {
+      if (referenciaMapa.current && asegurarCapasEnMapa(vehiculo)) {
         const fuenteDatos = referenciaMapa.current.getSource(vehiculo.sourceId);
         if (fuenteDatos) {
           fuenteDatos.setData({
