@@ -11,9 +11,9 @@ export const getDefaultConfig = () => {
   
   if (isNative) {
     return {
-      protocol: 'http',
-      host: '100.96.196.41',
-      port: '3001',
+      protocol: 'https',
+      host: 'trace.cybersec7.xyz',
+      port: '',
       customEnabled: true
     };
   }

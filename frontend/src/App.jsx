@@ -987,6 +987,9 @@ export default function App() {
 
   const [modo, setModo] = useState(() => {
     try {
+      if (typeof window !== 'undefined' && window.location.pathname.endsWith('/simulador')) {
+        return 'simulador';
+      }
       const guardado = localStorage.getItem('TRACEMIN_MODO');
       return guardado || 'menu';
     } catch(e) { return 'menu'; }
@@ -1265,14 +1268,16 @@ export default function App() {
               <span>Descargar App Nativa Android (.APK)</span>
             </a>
 
-            <a
-              href={`https://${configActual.host || window.location.hostname}:8443/simulador`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors underline"
-            >
-              🔒 Abrir Simulador Web en HTTPS (Puerto 8443)
-            </a>
+            {window.location.protocol !== 'https:' && (
+              <a
+                href={`https://${configActual.host || window.location.hostname}:8443/simulador`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors underline"
+              >
+                🔒 Abrir Simulador Web en HTTPS (Puerto 8443)
+              </a>
+            )}
           </div>
           
           {auth && (

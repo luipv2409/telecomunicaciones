@@ -35,6 +35,7 @@
   =============================================================================
 */
 
+#include "portal_html.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <DNSServer.h>
@@ -46,15 +47,16 @@
 #include <WiFiClientSecure.h>
 #include <esp_ota_ops.h>
 #include <esp_task_wdt.h>
-#include "portal_html.h"
 
 // =============================================================================
 //  CONFIGURACION RAPIDA: MODIFICA AQUI PARA TU ENTORNO
 // =============================================================================
-#define FIRMWARE_VERSION "3.1-ota"
+#define FIRMWARE_VERSION "3.2-ota"
 
-// Marca embebida en el binario .bin para que el servidor detecte la version sola
-extern const char MARCA_BINARIO_OTA[] __attribute__((used)) = "TRACEMIN_FW:" FIRMWARE_VERSION "|";
+// Marca embebida en el binario .bin para que el servidor detecte la version
+// sola
+extern const char MARCA_BINARIO_OTA[] __attribute__((used)) =
+    "TRACEMIN_FW:" FIRMWARE_VERSION "|";
 
 // Cada vez que cambies CONFIG_VERSION, el ESP32 reemplaza la configuracion del
 // SERVIDOR guardada en flash por los valores DEFAULT de abajo (una sola vez).
@@ -66,14 +68,14 @@ extern const char MARCA_BINARIO_OTA[] __attribute__((used)) = "TRACEMIN_FW:" FIR
 #define FORZAR_CONFIG_POR_DEFECTO false
 
 // Red Wi-Fi inicial que se agrega a la lista de redes guardadas
-#define DEFAULT_SSID        "Xiaomi"              // Hotspot de tu celular
-#define DEFAULT_CLAVE       "12345678"            // Contrasena del hotspot
+#define DEFAULT_SSID "Xiaomi"    // Hotspot de tu celular
+#define DEFAULT_CLAVE "12345678" // Contrasena del hotspot
 
 // Servidor de telemetria (Cloudflare Tunnel -> japon-server)
-#define DEFAULT_HOST        "trace.cybersec7.xyz" // Dominio publico TRACE-MIN
-#define DEFAULT_PUERTO      "443"                 // 443 = HTTPS
-#define DEFAULT_DISPOSITIVO "Camion-1"            // ID del vehiculo en la BD
-#define DEFAULT_PUENTE      "celular-1"           // ID del puente en /simulador
+#define DEFAULT_HOST "trace.cybersec7.xyz" // Dominio publico TRACE-MIN
+#define DEFAULT_PUERTO "443"               // 443 = HTTPS
+#define DEFAULT_DISPOSITIVO "Camion-1"     // ID del vehiculo en la BD
+#define DEFAULT_PUENTE "celular-1"         // ID del puente en /simulador
 
 // =============================================================================
 //  ASIGNACION DE PINES DE HARDWARE
@@ -923,7 +925,8 @@ void paginaPortal() {
 
 void rutaApiEstado() {
   JsonDocument doc;
-  bool conectado = (estadoWifi == WF_CONECTADO && WiFi.status() == WL_CONNECTED);
+  bool conectado =
+      (estadoWifi == WF_CONECTADO && WiFi.status() == WL_CONNECTED);
 
   const char *est;
   switch (estadoWifi) {
@@ -1350,8 +1353,8 @@ bool iniciarHttp(HTTPClient &http, const String &url, bool https) {
   http.setReuse(true); // Mantener viva la conexion TLS entre envios
   http.setConnectTimeout(4000);
   http.setTimeout(4000);
-  bool ok = https ? http.begin(clienteSeguro, url)
-                  : http.begin(clientePlano, url);
+  bool ok =
+      https ? http.begin(clienteSeguro, url) : http.begin(clientePlano, url);
   if (ok) {
     http.addHeader("ngrok-skip-browser-warning", "true");
     http.addHeader("User-Agent", "TraceMin-ESP32S3/" FIRMWARE_VERSION);
@@ -1359,7 +1362,8 @@ bool iniciarHttp(HTTPClient &http, const String &url, bool https) {
   return ok;
 }
 
-void reportarEstadoOta(const char *estado, int progreso, const String &mensaje) {
+void reportarEstadoOta(const char *estado, int progreso,
+                       const String &mensaje) {
   ultimoMensajeOta = mensaje;
   if (WiFi.status() != WL_CONNECTED || cfg.host.length() == 0)
     return;
@@ -1413,8 +1417,9 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
   Serial.println("\n=======================================================");
   Serial.printf("[OTA] Iniciando actualizacion remota -> v%s\n",
                 nuevaVersion.c_str());
-  Serial.printf("[OTA] MD5 esperado: %s\n",
-                md5Esperado.length() ? md5Esperado.c_str() : "(sin especificar)");
+  Serial.printf("[OTA] MD5 esperado: %s\n", md5Esperado.length()
+                                                ? md5Esperado.c_str()
+                                                : "(sin especificar)");
   Serial.println("=======================================================");
 
   // Liberar buffers TLS persistentes para disponer del maximo de RAM libre
@@ -1425,7 +1430,8 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
                     "Iniciando descarga en ESP32 (v" + nuevaVersion + ")...");
 
   String urlCompleta = rutaUrl;
-  if (!urlCompleta.startsWith("http://") && !urlCompleta.startsWith("https://")) {
+  if (!urlCompleta.startsWith("http://") &&
+      !urlCompleta.startsWith("https://")) {
     if (!urlCompleta.startsWith("/"))
       urlCompleta = "/" + urlCompleta;
     urlCompleta = urlBase() + urlCompleta;
@@ -1481,7 +1487,8 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
   }
 
   if (totalBytes < 65536 || totalBytes > 3145728) {
-    String msg = "Tamano de binario invalido (" + String(totalBytes) + " bytes)";
+    String msg =
+        "Tamano de binario invalido (" + String(totalBytes) + " bytes)";
     Serial.printf("[OTA ERROR] %s\n", msg.c_str());
     httpOta.end();
     ultimoMd5Fallido = md5Final;
@@ -1492,7 +1499,8 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
   }
 
   if (!Update.begin((size_t)totalBytes, U_FLASH, PIN_LED_ESTADO, HIGH)) {
-    String msg = String("No se pudo iniciar particion OTA: ") + Update.errorString();
+    String msg =
+        String("No se pudo iniciar particion OTA: ") + Update.errorString();
     Serial.printf("[OTA ERROR] %s\n", msg.c_str());
     httpOta.end();
     ultimoMd5Fallido = md5Final;
@@ -1536,8 +1544,7 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
       if (leidos > 0) {
         ultimoDatoMs = millis();
         if (Update.write(buf, (size_t)leidos) != (size_t)leidos) {
-          errorStream =
-              String("Fallo grabando flash: ") + Update.errorString();
+          errorStream = String("Fallo grabando flash: ") + Update.errorString();
           break;
         }
         escritos += (size_t)leidos;
@@ -1592,8 +1599,9 @@ bool ejecutarActualizacionOta(const String &rutaUrl, const String &nuevaVersion,
   memoria.putString("ota_prev", sketchMd5Actual);
   memoria.end();
 
-  Serial.printf("[OTA EXITO] Firmware v%s verificado y grabado! Reiniciando...\n",
-                nuevaVersion.c_str());
+  Serial.printf(
+      "[OTA EXITO] Firmware v%s verificado y grabado! Reiniciando...\n",
+      nuevaVersion.c_str());
   reportarEstadoOta("reiniciando", 100,
                     "Flash verificada OK (MD5). Reiniciando ESP32 a v" +
                         nuevaVersion + "...");
@@ -1652,6 +1660,7 @@ void consultarYReenviar() {
     return;
 
   bool https = esConexionHttps();
+  bool puenteReciente = false;
 
   // 1. Consultar el puente de datos del celular en el backend
   if (cfg.puente.length() > 0) {
@@ -1670,6 +1679,9 @@ void consultarYReenviar() {
             if (lat != 0.0 && lon != 0.0) {
               telemetria.latitud = lat;
               telemetria.longitud = lon;
+              if (edad <= 15000) {
+                puenteReciente = true;
+              }
             }
             telemetria.velocidad = entrada["velocidad"] | telemetria.velocidad;
             telemetria.altitud = entrada["altitud"] | telemetria.altitud;
@@ -1692,7 +1704,8 @@ void consultarYReenviar() {
       } else if (codigo > 0) {
         httpPuente.getString(); // Vaciar el cuerpo para reutilizar conexion
         if (codigo == 404)
-          estadoSistema = "Esperando celular en /simulador (" + cfg.puente + ")";
+          estadoSistema =
+              "Esperando celular en /simulador (" + cfg.puente + ")";
       } else {
         cerrarClientesHttp(); // Conexion rota: abrir una nueva la proxima vez
       }
@@ -1702,8 +1715,8 @@ void consultarYReenviar() {
 
   esp_task_wdt_reset();
 
-  // 2. Si el GPS NEO-6M tiene fix satelital real, actualizar coordenadas
-  if (neoGpsValido) {
+  // 2. Usar GPS NEO-6M fisico SOLO si el celular/simulador no esta enviando ruta activa
+  if (neoGpsValido && !puenteReciente) {
     telemetria.latitud = neoLat;
     telemetria.longitud = neoLon;
     telemetria.velocidad = neoVel;
@@ -1772,7 +1785,8 @@ void consultarYReenviar() {
   int resultado = envio.POST(cuerpo);
   String respuestaServidor = "";
   if (resultado > 0)
-    respuestaServidor = envio.getString(); // Leer respuesta y mantener conexion viva
+    respuestaServidor =
+        envio.getString(); // Leer respuesta y mantener conexion viva
   envio.end();
 
   if (resultado >= 200 && resultado < 300) {
@@ -1796,7 +1810,8 @@ void consultarYReenviar() {
                             " activo y verificado en linea");
     }
 
-    // Revisar si el servidor envio una orden de actualizacion OTA en este latido
+    // Revisar si el servidor envio una orden de actualizacion OTA en este
+    // latido
     if (respuestaServidor.indexOf("\"ota\"") >= 0) {
       JsonDocument respDoc;
       if (!deserializeJson(respDoc, respuestaServidor)) {
@@ -1845,7 +1860,8 @@ void setup() {
 
   cargarConfiguracion();
 
-  // Calcular MD5 de la particion activa una sola vez y conservar marca en el .bin
+  // Calcular MD5 de la particion activa una sola vez y conservar marca en el
+  // .bin
   sketchMd5Actual = ESP.getSketchMD5();
   Serial.printf("[OTA] %s | MD5: %s\n", MARCA_BINARIO_OTA,
                 sketchMd5Actual.c_str());
@@ -1868,7 +1884,7 @@ void setup() {
   clienteSeguro.setInsecure();
   clienteSeguro.setHandshakeTimeout(8);
 
-  WiFi.persistent(false);       // Las credenciales las gestiona este firmware
+  WiFi.persistent(false); // Las credenciales las gestiona este firmware
   WiFi.setHostname("tracemin-esp32");
   WiFi.mode(WIFI_AP_STA);
   WiFi.setAutoReconnect(false); // La reconexion la hace gestionarWifi()
